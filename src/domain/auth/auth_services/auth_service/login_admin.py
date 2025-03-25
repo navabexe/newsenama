@@ -1,11 +1,11 @@
 from fastapi import HTTPException, status
 from common.security.jwt_handler import generate_access_token, generate_refresh_token
+from common.security.password import hash_password, verify_password  # اضافه کردن bcrypt
 from infrastructure.database.mongodb.mongo_client import find_one
-from infrastructure.database.redis.redis_client import hset
+from infrastructure.database.redis.redis_client import hset, get  # برای چک session
 from common.logging.logger import log_info, log_error
 from datetime import datetime, timezone
 from uuid import uuid4
-import hashlib
 
 async def login_admin_service(username: str, password: str, client_ip: str) -> dict:
     try:
@@ -15,9 +15,8 @@ async def login_admin_service(username: str, password: str, client_ip: str) -> d
             log_error("Admin not found or no password set", extra={"username": username, "ip": client_ip})
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-        # Verify password (using SHA-256 for now)
-        hashed_password = hashlib.sha256(password.encode()).hexdigest()
-        if hashed_password != admin["password"]:
+        # Verify password with bcrypt
+        if not verify_password(password, admin["password"]):
             log_error("Password verification failed", extra={"username": username, "ip": client_ip})
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
@@ -29,7 +28,7 @@ async def login_admin_service(username: str, password: str, client_ip: str) -> d
         admin_id = str(admin["_id"])
         role = "admin"
 
-        # Generate tokens
+        # Generate session ID and tokens
         session_id = str(uuid4())
         access_token = generate_access_token(
             user_id=admin_id,
@@ -39,18 +38,24 @@ async def login_admin_service(username: str, password: str, client_ip: str) -> d
         )
         refresh_token = generate_refresh_token(admin_id, role, session_id)
 
-        # Store session info
-        hset(f"sessions:{admin_id}:{session_id}", mapping={
+        # Store session info in Redis with TTL (e.g., 1 day)
+        session_key = f"sessions:{admin_id}:{session_id}"
+        hset(session_key, mapping={
             "ip": client_ip,
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "device": "unknown"
+            "device": "unknown",
+            "status": "active"
         })
+        # تنظیم TTL برای session (مثلاً 24 ساعت)
+        from infrastructure.database.redis.redis_client import setex
+        setex(session_key, 86400, "active")  # 24 ساعت
 
         # Log success
         log_info("Admin login successful", extra={
             "admin_id": admin_id,
             "username": username,
             "ip": client_ip,
+            "session_id": session_id,
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
 

@@ -100,15 +100,20 @@ def generate_refresh_token(user_id: str, role: str, session_id: str) -> str:
         token = jwt.encode(payload, REFRESH_SECRET, algorithm=ALGORITHM)
         redis_key = f"refresh_tokens:{user_id}:{jti}"
         setex(redis_key, REFRESH_TTL, "valid")
+
         # Limit refresh tokens to 5
         all_keys = keys(f"refresh_tokens:{user_id}:*")
         if len(all_keys) > 5:
-            oldest = sorted(all_keys, key=lambda k: get(k))[:-5]
-            for key in oldest:
-                delete(key)
-                log_info("Old refresh token removed", extra={"user_id": user_id, "key": key})
+            sorted_keys = sorted(all_keys, key=lambda k: get(k) or "")
+            for old_key in sorted_keys[:-5]:
+                delete(old_key)
+                old_jti = old_key.split(":")[-1]
+                setex(f"blacklist:{old_jti}", REFRESH_TTL, "revoked")
+                log_info("Old refresh token removed", extra={"user_id": user_id, "key": old_key})
+
         log_info("Refresh token generated", extra={"user_id": user_id, "jti": jti})
         return token
+
     except Exception as e:
         log_error("Refresh token generation failed", extra={"user_id": user_id, "error": str(e)})
         raise JWTError(f"Failed to generate refresh token: {str(e)}")

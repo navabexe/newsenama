@@ -1,30 +1,20 @@
+# File: domain/auth/auth_services/auth_service/logout.py
+
 from fastapi import HTTPException, status
 from common.security.jwt_handler import revoke_token
 from infrastructure.database.redis.redis_client import delete, get
 from common.logging.logger import log_info, log_error
 from datetime import datetime, timezone
+from infrastructure.database.redis.redis_client import hgetall  # اضافه کن
+
 
 async def logout_service(user_id: str, session_id: str, client_ip: str) -> dict:
-    """
-    Handle logout logic by invalidating the current session.
-
-    Args:
-        user_id (str): ID of the user.
-        session_id (str): ID of the session to invalidate.
-        client_ip (str): Client's IP address.
-
-    Returns:
-        dict: Confirmation message.
-
-    Raises:
-        HTTPException: If logout fails.
-    """
     try:
         session_key = f"sessions:{user_id}:{session_id}"
-        token_key = f"refresh_tokens:{user_id}:*"
+        refresh_token_key = f"refresh_tokens:{user_id}:{session_id}"
 
         # Check if session exists
-        session_data = get(session_key)
+        session_data = hgetall(session_key)
         if not session_data:
             log_error("Session not found", extra={"user_id": user_id, "session_id": session_id, "ip": client_ip})
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Session not found")
@@ -32,11 +22,15 @@ async def logout_service(user_id: str, session_id: str, client_ip: str) -> dict:
         # Delete session
         delete(session_key)
 
-        # Revoke refresh token (assuming jti is stored in token)
-        refresh_token_key = f"refresh_tokens:{user_id}:{session_id}"
+        # Revoke refresh token (if present)
         if get(refresh_token_key):
             delete(refresh_token_key)
-            revoke_token(session_id, 86400)  # Revoke for 1 day
+            revoke_token(session_id, 86400)
+
+        # Revoke access token via jti (optional, if sent in payload)
+        jti = session_data.get("jti") if isinstance(session_data, dict) else None
+        if jti:
+            revoke_token(jti, 900)  # Match access TTL
 
         log_info("Logout successful", extra={
             "user_id": user_id,
