@@ -7,24 +7,36 @@ from common.logging.logger import log_info, log_error
 from datetime import datetime, timezone
 from uuid import uuid4
 
+
 async def login_password_service(phone: str, password: str, client_ip: str) -> dict:
     try:
-        # Find user in MongoDB (support both users and vendors)
-        user = find_one("users", {"phone": phone})
+        phone = phone.strip()
+
+        # Check both user and vendor collections
+        user = await find_one("users", {"phone": phone})
         collection = "users"
         if not user:
-            user = find_one("vendors", {"phone": phone})
+            user = await find_one("vendors", {"phone": phone})
             collection = "vendors"
-        if not user or "password" not in user:
-            log_error("User not found or no password set", extra={"phone": phone, "ip": client_ip})
+
+        if not user:
+            log_error("User not found", extra={"phone": phone, "ip": client_ip})
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-        # Check account status
-        if user["status"] != "active":
-            log_error("Account not active", extra={"phone": phone, "status": user["status"], "ip": client_ip})
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Account status: {user['status']}")
+        if "password" not in user or not user["password"]:
+            log_error("User has no password set", extra={"phone": phone, "ip": client_ip})
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-        # Verify password
+        # Account must be active
+        if user.get("status") != "active":
+            log_error("Account not active", extra={
+                "phone": phone,
+                "status": user.get("status"),
+                "ip": client_ip
+            })
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Account status: {user.get('status')}")
+
+        # Verify password using bcrypt
         if not verify_password(password, user["password"]):
             log_error("Password verification failed", extra={"phone": phone, "ip": client_ip})
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
@@ -32,25 +44,31 @@ async def login_password_service(phone: str, password: str, client_ip: str) -> d
         user_id = str(user["_id"])
         role = user["role"]
 
-        # Generate tokens
-        session_id = str(uuid4())
+        # Define scopes based on role
         scopes = ["read"] if role == "user" else ["vendor:read", "vendor:write"]
+
+        # Generate session and tokens
+        session_id = str(uuid4())
         access_token = generate_access_token(user_id, role, session_id, scopes=scopes)
         refresh_token = generate_refresh_token(user_id, role, session_id)
 
-        # Store session info
-        hset(f"sessions:{user_id}:{session_id}", mapping={
+        # Store session info in Redis
+        session_key = f"sessions:{user_id}:{session_id}"
+        hset(session_key, mapping={
             "ip": client_ip,
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "device": "unknown"
+            "device": "unknown",
+            "status": "active"
         })
 
-        # Log success
+        # Logging successful login
         log_info("Login successful with password", extra={
             "user_id": user_id,
-            "phone": phone,
             "role": role,
+            "collection": collection,
+            "phone": phone,
             "ip": client_ip,
+            "session_id": session_id,
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
 
@@ -64,8 +82,8 @@ async def login_password_service(phone: str, password: str, client_ip: str) -> d
         raise e
     except Exception as e:
         log_error("Login with password failed", extra={
-            "phone": phone if "phone" in locals() else "unknown",
+            "phone": phone,
             "error": str(e),
             "ip": client_ip
-        })
+        }, exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to login")

@@ -1,3 +1,4 @@
+# application/users/controllers/profile/set_username.py
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from common.security.auth import get_current_user
@@ -6,14 +7,14 @@ from domain.users.user_services.username_service.check_unique import check_usern
 from domain.users.user_services.username_service.reserve import check_reserved_username
 from domain.users.user_services.username_service.update import update_username
 from common.logging.logger import log_info
+from infrastructure.database.mongodb.repository import MongoRepository
+from infrastructure.database.mongodb.mongo_client import get_mongo_collection
 
 router = APIRouter()
 
-# === Request Schema ===
 class SetUsernameRequest(BaseModel):
     username: str = Field(..., json_schema_extra={"example": "mihaanwood"})
 
-# === Response Schema ===
 class SetUsernameResponse(BaseModel):
     message: str = Field(..., json_schema_extra={"example": "Username has been set successfully."})
 
@@ -27,6 +28,8 @@ class SetUsernameResponse(BaseModel):
 async def set_username(
     payload: SetUsernameRequest,
     current_user: dict = Depends(get_current_user),
+    users_repo: MongoRepository = Depends(get_mongo_collection("users")),
+    vendors_repo: MongoRepository = Depends(get_mongo_collection("vendors"))
 ):
     user_id = current_user["sub"]
     role = current_user["role"]
@@ -36,8 +39,8 @@ async def set_username(
         raise HTTPException(status_code=400, detail="Invalid username format.")
 
     check_reserved_username(username)
-    await check_username_unique(username)
-    await update_username(user_id=user_id, role=role, username=username)
+    await check_username_unique(username, users_repo=users_repo, vendors_repo=vendors_repo)
+    await update_username(user_id=user_id, role=role, username=username, users_repo=users_repo, vendors_repo=vendors_repo)
 
     log_info("Username set successfully", extra={"user_id": user_id, "username": username})
 

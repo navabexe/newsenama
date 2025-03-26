@@ -8,53 +8,66 @@ from common.logging.logger import log_info, log_error
 from datetime import datetime, timezone
 from uuid import uuid4
 
-async def complete_user_profile_service(temporary_token: str, first_name: str, last_name: str, email: str, client_ip: str) -> dict:
-    """Handle user profile completion logic."""
+async def complete_user_profile_service(
+    temporary_token: str,
+    first_name: str,
+    last_name: str,
+    email: str,
+    client_ip: str
+) -> dict:
+    """
+    Complete a user's profile after OTP verification.
+    """
     try:
-        # Decode temporary token
+        # Decode and verify temporary token
         payload = decode_token(temporary_token, "temp")
         phone = payload["sub"]
         role = payload["role"]
         jti = payload["jti"]
         token_key = f"temp_token:{jti}"
 
-        # Verify token and role
         if get(token_key) != phone:
-            log_error("Invalid temporary token", extra={"phone": phone, "jti": jti, "ip": client_ip})
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid temporary token")
+            log_error("Invalid temporary token", extra={"jti": jti, "ip": client_ip})
+            raise HTTPException(status_code=401, detail="Invalid temporary token")
+
         if role != "user":
             log_error("Role mismatch", extra={"phone": phone, "role": role, "ip": client_ip})
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This endpoint is for users only")
+            raise HTTPException(status_code=403, detail="Only users can complete this profile")
 
-        # Check user in MongoDB
-        user = find_one("users", {"phone": phone})
-        if not user or user["status"] != "incomplete":
-            log_error("User not found or already complete", extra={"phone": phone, "ip": client_ip})
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Profile not eligible for completion")
+        # Fetch user
+        user = await find_one("users", {"phone": phone})
+        if not user or user.get("status") != "incomplete":
+            log_error("User not eligible for profile completion", extra={"phone": phone, "ip": client_ip})
+            raise HTTPException(status_code=400, detail="Profile not eligible for completion")
 
         user_id = str(user["_id"])
 
-        # Update profile
-        update_one("users", {"_id": user_id}, {
-            "first_name": first_name,
-            "last_name": last_name,
-            "email": email,
+        # Update user profile
+        update_result = await update_one("users", {"_id": user_id}, {
+            "first_name": first_name.strip(),
+            "last_name": last_name.strip(),
+            "email": email.strip().lower(),
             "status": "active",
             "updated_at": datetime.now(timezone.utc)
         })
 
-        # Clean up Redis
+        if update_result == 0:
+            raise HTTPException(status_code=500, detail="Failed to update profile")
+
+        # Delete temp token from Redis
         delete(token_key)
 
-        # Generate full tokens
+        # Generate session and tokens
         session_id = str(uuid4())
-        access_token = generate_access_token(user_id, role, session_id)
-        refresh_token = generate_refresh_token(user_id, role, session_id)
+        access_token = await generate_access_token(user_id, role, session_id)
+        refresh_token = await generate_refresh_token(user_id, role, session_id)
 
-        # Store session info
+        # Store session in Redis
         hset(f"sessions:{user_id}:{session_id}", mapping={
             "ip": client_ip,
-            "created_at": datetime.now(timezone.utc).isoformat()
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "status": "active",
+            "device": "unknown"
         })
 
         # Log success
@@ -80,5 +93,5 @@ async def complete_user_profile_service(temporary_token: str, first_name: str, l
             "phone": phone if "phone" in locals() else "unknown",
             "error": str(e),
             "ip": client_ip
-        })
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to complete profile")
+        }, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to complete profile")

@@ -1,3 +1,5 @@
+# File: common/security/jwt/tokens.py
+
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 import jwt
@@ -7,7 +9,7 @@ from infrastructure.database.redis.redis_client import setex, get, delete, keys
 from infrastructure.database.mongodb.mongo_client import find_one
 from .errors import JWTError
 
-def generate_temp_token(phone: str, role: str, jti: str = None, phone_verified: bool = False) -> str:
+async def generate_temp_token(phone: str, role: str, jti: str = None, phone_verified: bool = False) -> str:
     jti = jti or str(uuid4())
     payload = {
         "sub": phone,
@@ -26,10 +28,10 @@ def generate_temp_token(phone: str, role: str, jti: str = None, phone_verified: 
         raise JWTError(f"Failed to generate temp token: {str(e)}")
 
 
-def generate_access_token(user_id: str, role: str, session_id: str, scopes: list[str] = None) -> str:
+async def generate_access_token(user_id: str, role: str, session_id: str, scopes: list[str] = None) -> str:
     jti = str(uuid4())
     collection = "admins" if role == "admin" else "vendors" if role == "vendor" else "users"
-    user_data = find_one(collection, {"_id": user_id})
+    user_data = await find_one(collection, {"_id": user_id})
     if not user_data:
         log_error("User not found for token", extra={"user_id": user_id, "role": role})
         raise JWTError(f"No {role} found with ID: {user_id}")
@@ -61,7 +63,7 @@ def generate_access_token(user_id: str, role: str, session_id: str, scopes: list
         raise JWTError(f"Failed to generate access token: {str(e)}")
 
 
-def generate_refresh_token(user_id: str, role: str, session_id: str) -> str:
+async def generate_refresh_token(user_id: str, role: str, session_id: str) -> str:
     jti = str(uuid4())
     payload = {
         "sub": user_id,
@@ -76,7 +78,6 @@ def generate_refresh_token(user_id: str, role: str, session_id: str) -> str:
         redis_key = f"refresh_tokens:{user_id}:{jti}"
         setex(redis_key, settings.REFRESH_TTL, "valid")
 
-        # Limit refresh tokens to 5
         all_keys = keys(f"refresh_tokens:{user_id}:*")
         if len(all_keys) > 5:
             sorted_keys = sorted(all_keys, key=lambda k: get(k) or "")

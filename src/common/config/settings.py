@@ -1,10 +1,16 @@
+# common/config/settings.py
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 from pathlib import Path
 import os
 
-# Load .env from project root
-load_dotenv(dotenv_path=Path(__file__).parent.parent.parent / ".env")
+
+BASE_DIR = Path(__file__).parent.parent.parent.parent
+env_path = BASE_DIR / ".env"
+
+
+print("Trying to load .env from:", env_path)
+load_dotenv(dotenv_path=env_path)
 
 class Settings(BaseSettings):
     SECRET_KEY: str
@@ -18,10 +24,12 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ".env"
+        env_file_encoding = "utf-8"
         case_sensitive = True
 
-# Fallback fix for env name mismatches
-settings = Settings(
-    ACCESS_SECRET=os.getenv("ACCESS_SECRET", os.getenv("SECRET_KEY", "")),
-    REFRESH_SECRET=os.getenv("REFRESH_SECRET", os.getenv("REFRESH_SECRET_KEY", "")),
-)
+# برای دیباگ
+print("SECRET_KEY:", os.getenv("SECRET_KEY"))
+print("ACCESS_SECRET:", os.getenv("ACCESS_SECRET"))
+print("REFRESH_SECRET:", os.getenv("REFRESH_SECRET"))
+
+settings = Settings()

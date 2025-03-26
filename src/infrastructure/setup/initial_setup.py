@@ -1,4 +1,5 @@
-from infrastructure.database.mongodb.mongo_client import find_one, insert_one
+# infrastructure/setup/initial_setup.py
+from infrastructure.database.mongodb.repository import MongoRepository
 from common.logging.logger import log_info
 from datetime import datetime, timezone
 from dotenv import load_dotenv
@@ -7,23 +8,18 @@ from common.security.password import hash_password
 
 load_dotenv()
 
-
-async def setup_admin_and_categories():
-    # Load admin credentials from environment variables with defaults
+async def setup_admin_and_categories(admins_repo: MongoRepository, categories_repo: MongoRepository):
     admin_username = os.getenv("ADMIN_USERNAME")
     admin_password = os.getenv("ADMIN_PASSWORD")
 
-    # Validate environment variables
     if not admin_password:
         raise ValueError("ADMIN_PASSWORD must be set in .env for security in production")
     if len(admin_password) < 8:
         raise ValueError("ADMIN_PASSWORD must be at least 8 characters long")
 
-    # Hash password with bcrypt
     hashed_password = hash_password(admin_password)
 
-    # Check if admin exists and create if not
-    admin = find_one("admins", {"username": admin_username})
+    admin = await admins_repo.find_one({"username": admin_username})
     if not admin:
         admin_data = {
             "username": admin_username,
@@ -33,17 +29,15 @@ async def setup_admin_and_categories():
             "created_at": datetime.now(timezone.utc),
             "updated_at": datetime.now(timezone.utc)
         }
-        admin_id = insert_one("admins", admin_data)
+        admin_id = await admins_repo.insert_one(admin_data)
         log_info("Admin user created", extra={"admin_id": str(admin_id)})
 
-    # Setup default business categories
     default_categories = [
         {"name": "Furniture", "description": "Furniture and home decor", "created_at": datetime.now(timezone.utc)},
-        {"name": "Electronics", "description": "Electronic gadgets and appliances",
-         "created_at": datetime.now(timezone.utc)},
+        {"name": "Electronics", "description": "Electronic gadgets and appliances", "created_at": datetime.now(timezone.utc)},
         {"name": "Clothing", "description": "Clothing and fashion items", "created_at": datetime.now(timezone.utc)}
     ]
     for category in default_categories:
-        if not find_one("business_categories", {"name": category["name"]}):
-            category_id = insert_one("business_categories", category)
+        if not await categories_repo.find_one({"name": category["name"]}):
+            category_id = await categories_repo.insert_one(category)
             log_info("Business category created", extra={"category_id": str(category_id)})

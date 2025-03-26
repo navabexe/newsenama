@@ -1,5 +1,4 @@
 # File: main.py
-
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, PlainTextResponse
@@ -7,7 +6,9 @@ from starlette.responses import JSONResponse
 from contextlib import asynccontextmanager
 from common.logging.logger import log_info, log_error
 from dotenv import load_dotenv
-from infrastructure.setup.initial_setup import setup_admin_and_categories  # Import setup function
+from infrastructure.setup.initial_setup import setup_admin_and_categories
+from infrastructure.database.mongodb.connection import MongoDBConnection
+from infrastructure.database.mongodb.repository import MongoRepository
 
 # === Import Routers ===
 from application.auth.controllers.auth_controller import router as auth_router
@@ -20,10 +21,15 @@ load_dotenv()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup logic
-    await setup_admin_and_categories()  # Call the setup function
+    await MongoDBConnection.connect()  # اتصال به MongoDB
+    db = MongoDBConnection.get_db()
+    admins_repo = MongoRepository(db, "admins")
+    categories_repo = MongoRepository(db, "business_categories")
+    await setup_admin_and_categories(admins_repo, categories_repo)  # پاس دادن رپوزیتوری‌ها
     log_info("Senama API started", extra={"version": "1.0.0"})
     yield
     # Shutdown logic
+    await MongoDBConnection.disconnect()  # بستن اتصال
     log_info("Senama API stopped")
 
 app = FastAPI(

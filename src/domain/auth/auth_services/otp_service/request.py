@@ -36,7 +36,7 @@ async def request_otp_service(phone: str, role: str, purpose: str, client_ip: st
         # === Generate OTP and token ===
         otp_code = generate_otp_code()
         jti = str(uuid4())
-        temp_token = generate_temp_token(phone=phone, role=role, jti=jti)
+        temp_token = await generate_temp_token(phone=phone, role=role, jti=jti)
 
         # === Save OTP and Token ===
         otp_ttl = 300  # 5 minutes
@@ -75,5 +75,5 @@ async def request_otp_service(phone: str, role: str, purpose: str, client_ip: st
     except HTTPException as e:
         raise e
     except Exception as e:
-        log_error("OTP request failed", extra={"phone": phone, "error": str(e), "ip": client_ip})
+        log_error("OTP request failed", extra={"phone": phone, "error": str(e), "ip": client_ip}, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to process OTP request")

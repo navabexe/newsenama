@@ -2,7 +2,7 @@ from fastapi import APIRouter, Request, HTTPException, status
 from pydantic import BaseModel, Field
 from domain.auth.auth_services.auth_service.login_admin import login_admin_service
 
-router = APIRouter(tags=["Authentication"])  # prefix رو حذف کردیم
+router = APIRouter(tags=["Authentication"])
 
 class LoginAdminRequest(BaseModel):
     username: str = Field(

@@ -1,13 +1,13 @@
 # === SERVICE: refresh_token.py ===
 
-
 from fastapi import HTTPException
-from common.security.token import decode_refresh_token, generate_access_token
 from infrastructure.database.redis.redis_client import get
+from common.security.jwt.decode import decode_token as decode_refresh_token
+from common.security.jwt.tokens import generate_access_token
 
-def generate_new_access_token(refresh_token: str) -> str:
+async def generate_new_access_token(refresh_token: str) -> str:
     try:
-        payload = decode_refresh_token(refresh_token)
+        payload = decode_refresh_token(refresh_token, token_type="refresh")
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
@@ -22,9 +22,9 @@ def generate_new_access_token(refresh_token: str) -> str:
     if not get(session_key):
         raise HTTPException(status_code=401, detail="Session is no longer active")
 
-    return generate_access_token(
+    return await generate_access_token(
         user_id=user_id,
         role=role,
         session_id=session_id,
-        phone_verified=payload.get("phone_verified", False)
+        scopes=payload.get("scopes")  # Optional: preserve original scopes
     )
