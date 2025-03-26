@@ -1,15 +1,10 @@
-# infrastructure/database/mongodb/connection.py
-import os
+# File: infrastructure/database/mongodb/connection.py
+
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
-from fastapi import Depends
+
+from common.config.settings import settings
 from common.logging.logger import log_info, log_error
-from common.config.settings import Settings
 
-settings = Settings()
-
-MONGO_URI = os.getenv("MONGO_URI")
-MONGO_DB = os.getenv("MONGO_DB", "senama_db")
-MONGO_TIMEOUT = int(os.getenv("MONGO_TIMEOUT", 5000))  # ms
 
 class MongoDBConnection:
     _client: AsyncIOMotorClient = None
@@ -19,10 +14,13 @@ class MongoDBConnection:
     async def connect(cls):
         if cls._client is None:
             try:
-                cls._client = AsyncIOMotorClient(MONGO_URI, serverSelectionTimeoutMS=MONGO_TIMEOUT)
-                cls._db = cls._client[MONGO_DB]
+                cls._client = AsyncIOMotorClient(
+                    settings.MONGO_URI,
+                    serverSelectionTimeoutMS=settings.MONGO_TIMEOUT
+                )
+                cls._db = cls._client[settings.MONGO_DB]
                 await cls._client.admin.command("ping")
-                log_info("MongoDB async connection established", extra={"uri": MONGO_URI})
+                log_info("MongoDB async connection established", extra={"uri": settings.MONGO_URI})
             except Exception as e:
                 log_error("MongoDB async connection failed", extra={"error": str(e)})
                 raise RuntimeError(f"Failed to connect to MongoDB: {str(e)}")
@@ -39,12 +37,14 @@ class MongoDBConnection:
             raise RuntimeError("MongoDB not connected. Call connect() first.")
         return cls._db
 
-# Dependency
+
+# Dependency for FastAPI injection
 async def get_mongo_db() -> AsyncIOMotorDatabase:
     await MongoDBConnection.connect()
     return MongoDBConnection.get_db()
 
-# Startup و Shutdown  FastAPI
+
+# Startup & Shutdown hooks
 async def startup_db():
     await MongoDBConnection.connect()
 

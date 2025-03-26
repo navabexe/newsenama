@@ -1,7 +1,9 @@
 # File: domain/auth/entities/vendor_profile.py
 
-from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
+
+from pydantic import BaseModel, Field
+
 
 class Location(BaseModel):
     lat: float = Field(..., description="Latitude")
@@ -17,14 +19,12 @@ class CompleteVendorProfile(BaseModel):
     address: Optional[str] = Field(None, min_length=5, description="Business address")
     business_category_ids: Optional[List[str]] = Field(None, description="List of business category IDs")
 
-    @field_validator("business_name", "owner_name", "city", "province", "address")
     @classmethod
     def validate_not_empty(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and not v.strip():
             raise ValueError("Field cannot be empty")
         return v.strip() if v else None
 
-    @field_validator("business_category_ids")
     @classmethod
     def validate_category_ids(cls, v: Optional[List[str]]) -> Optional[List[str]]:
         if v is not None and not v:

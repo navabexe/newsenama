@@ -1,16 +1,19 @@
 # File: domain/auth/auth_services/auth_service/request_account_deletion.py
 
+from datetime import datetime, timezone
+
 from fastapi import HTTPException, status
+
+from common.logging.logger import log_info, log_error
 from common.security.jwt_handler import revoke_all_user_tokens
 from infrastructure.database.mongodb.mongo_client import update_one
-from common.logging.logger import log_info, log_error
-from datetime import datetime, timezone
+
 
 async def request_account_deletion_service(user_id: str, client_ip: str) -> dict:
     """Handle account deletion request logic."""
     try:
         # Mark account for deletion
-        update_one("users", {"_id": user_id}, {
+        await update_one("users", {"_id": user_id}, {
             "status": "pending_deletion",
             "deletion_requested_at": datetime.now(timezone.utc)
         })

@@ -1,7 +1,8 @@
 # File: application/auth/controllers/auth/complete_user_profile.py
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
+
 from domain.auth.auth_services.auth_service.complete_user_profile import complete_user_profile_service
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -12,7 +13,6 @@ class CompleteUserProfile(BaseModel):
     last_name: str = Field(..., min_length=2, description="User's last name")
     email: str = Field(..., description="User's email address")
 
-    @field_validator("email")
     @classmethod
     def validate_email(cls, v: str) -> str:
         if "@" not in v or "." not in v:
