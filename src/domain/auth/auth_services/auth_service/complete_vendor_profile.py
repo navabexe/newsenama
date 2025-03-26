@@ -3,6 +3,7 @@ from uuid import uuid4
 from fastapi import HTTPException, status
 from pydantic import BaseModel, Field
 from common.security.jwt_handler import decode_token, generate_access_token, generate_refresh_token
+from common.security.permissions_loader import get_scopes_for_role
 from infrastructure.database.redis.redis_client import get, delete, hset
 from infrastructure.database.mongodb.mongo_client import find_one, update_one, find, insert_one
 from common.logging.logger import log_info, log_error
@@ -128,26 +129,21 @@ async def complete_vendor_profile_service(
         # Set status and tokens
         if is_complete and updated_vendor["status"] == "incomplete":
             update_one("vendors", {"_id": ObjectId(vendor_id)}, {"status": "pending"})
-            await notify_admin_of_pending_vendor(
-                vendor_id=vendor_id,
-                phone=phone,
-                business_name=updated_vendor["business_name"],
-                client_ip=client_ip
-            )
+            await notify_admin_of_pending_vendor(...)
             message = "Vendor profile registered successfully and is pending admin review"
+
             session_id = str(uuid4())
+            vendor_status = updated_vendor["status"]
             access_token = generate_access_token(
                 user_id=vendor_id,
                 role=role,
                 session_id=session_id,
-                scopes=["vendor:read"]
+                scopes=get_scopes_for_role(role, vendor_status)
             )
             refresh_token = None
-            hset(f"sessions:{vendor_id}:{session_id}", mapping={
-                "ip": client_ip,
-                "created_at": datetime.now(timezone.utc).isoformat()
-            })
+
             delete(token_key)
+
         else:
             message = "Profile updated successfully. Please complete all required fields."
             access_token = temporary_token

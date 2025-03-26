@@ -1,6 +1,7 @@
 from fastapi import HTTPException, status
 from common.security.jwt_handler import generate_access_token, generate_refresh_token
 from common.security.password import hash_password, verify_password  # اضافه کردن bcrypt
+from common.security.permissions_loader import get_scopes_for_role
 from infrastructure.database.mongodb.mongo_client import find_one
 from infrastructure.database.redis.redis_client import hset, get  # برای چک session
 from common.logging.logger import log_info, log_error
@@ -34,7 +35,7 @@ async def login_admin_service(username: str, password: str, client_ip: str) -> d
             user_id=admin_id,
             role=role,
             session_id=session_id,
-            scopes=["admin:read", "admin:write"]
+            scopes=get_scopes_for_role(role)
         )
         refresh_token = generate_refresh_token(admin_id, role, session_id)
 

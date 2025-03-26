@@ -1,5 +1,6 @@
 from fastapi import HTTPException, status
 from common.security.jwt_handler import generate_access_token, generate_refresh_token
+from common.security.permissions_loader import get_scopes_for_role
 from infrastructure.database.mongodb.mongo_client import find_one, update_one, insert_one
 from infrastructure.database.redis.redis_client import delete, keys, hset
 from common.logging.logger import log_info, log_error
@@ -67,22 +68,20 @@ async def approve_vendor_service(current_user: dict, vendor_id: str, action: str
         response = {"message": f"Vendor {action}ed successfully"}
         if action == "approve":
             session_id = str(uuid4())
+            vendor_status = new_status
             access_token = generate_access_token(
                 user_id=vendor_id,
                 role="vendor",
                 session_id=session_id,
-                scopes=["vendor:read", "vendor:write"]
+                scopes=get_scopes_for_role("vendor", vendor_status)
             )
+
             refresh_token = generate_refresh_token(vendor_id, "vendor", session_id)
-            hset(f"sessions:{vendor_id}:{session_id}", mapping={
-                "ip": client_ip,
-                "created_at": datetime.now(timezone.utc).isoformat()
-            })
+
             response.update({
                 "access_token": access_token,
                 "refresh_token": refresh_token
             })
-
         log_info(f"Vendor {action}ed", extra={
             "vendor_id": vendor_id,
             "new_status": new_status,

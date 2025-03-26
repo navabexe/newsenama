@@ -3,8 +3,12 @@
 from fastapi import HTTPException, Request
 from jose import JWTError, jwt
 from infrastructure.database.redis.redis_client import redis, get, incr, expire, keys, delete
-from common.security.jwt_handler import ACCESS_SECRET, ALGORITHM
 from common.logging.logger import log_warning, log_error, log_info
+from common.config.settings import settings
+
+ACCESS_SECRET = settings.ACCESS_SECRET
+ALGORITHM = settings.ALGORITHM
+
 
 RATE_LIMIT_CONFIG = [
     {"limit": 3, "window": 60},      # 3 requests per minute

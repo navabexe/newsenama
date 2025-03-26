@@ -1,6 +1,7 @@
 from fastapi import HTTPException, status
 from common.security.jwt_handler import generate_access_token, generate_refresh_token
 from common.security.password import verify_password
+from common.security.permissions_loader import get_scopes_for_role
 from infrastructure.database.mongodb.mongo_client import find_one
 from infrastructure.database.redis.redis_client import hset
 from common.logging.logger import log_info, log_error
@@ -26,7 +27,13 @@ async def login_vendor_service(phone: str, password: str, client_ip: str) -> dic
         role = "vendor"
         session_id = str(uuid4())
 
-        access_token = generate_access_token(vendor_id, role, session_id, scopes=["vendor:read", "vendor:write"])
+        vendor_status = vendor["status"]
+        access_token = generate_access_token(
+            vendor_id,
+            role,
+            session_id,
+            scopes=get_scopes_for_role(role, vendor_status)
+        )
         refresh_token = generate_refresh_token(vendor_id, role, session_id)
 
         hset(f"sessions:{vendor_id}:{session_id}", mapping={

@@ -12,6 +12,7 @@ from infrastructure.setup.initial_setup import setup_admin_and_categories  # Imp
 # === Import Routers ===
 from application.auth.controllers.auth_controller import router as auth_router
 from application.users.controllers.profile.set_username import router as username_router
+from application.access_control.controllers.access_control import router as access_control_router
 
 load_dotenv()
 
@@ -58,6 +59,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # === Include Routers ===
 app.include_router(auth_router)
+app.include_router(access_control_router)
 app.include_router(username_router, prefix="/profile")
 
 # === Root Endpoint ===
