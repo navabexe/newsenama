@@ -1,4 +1,4 @@
-from fastapi import Request, HTTPException, status, Depends
+from fastapi import Request, HTTPException, Depends
 from redis.asyncio import Redis
 from bson import ObjectId
 
@@ -10,9 +10,6 @@ from .decode import decode_token
 
 
 def get_token_from_header(request: Request) -> str:
-    """
-    Extracts the Bearer token from the Authorization header.
-    """
     auth = request.headers.get("Authorization")
     if not auth or not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Authorization header missing or invalid")
@@ -23,13 +20,9 @@ async def get_current_user(
     request: Request,
     redis: Redis = Depends(get_redis_client)
 ) -> dict:
-    """
-    Extract user from access token: validate JWT, session, and user existence.
-    """
     token = get_token_from_header(request)
 
     try:
-        # 🔐 Decode the access token
         payload = await decode_token(token, token_type="access", redis=redis)
 
         user_id = payload.get("sub")
@@ -41,18 +34,35 @@ async def get_current_user(
             log_error("Incomplete JWT payload", extra={"payload": payload})
             raise HTTPException(status_code=401, detail="Invalid token structure")
 
-        # ❌ Check blacklist
-        if await get(f"blacklist:{jti}", redis):
+        # ✅ بررسی کلید blacklist
+        blacklist_key = f"blacklist:{jti}"
+        key_type = await redis.type(blacklist_key)
+        if key_type not in [b'string', b'none']:
+            await redis.delete(blacklist_key)
+        if await get(blacklist_key, redis):
             log_error("Revoked token used", extra={"jti": jti, "user_id": user_id})
             raise HTTPException(status_code=401, detail="Token is revoked")
 
-        # 📦 Validate session
+        # ✅ بررسی session key دقیق‌تر
         session_key = f"sessions:{user_id}:{session_id}"
-        if not await get(session_key, redis):
-            log_error("Missing session", extra={"user_id": user_id, "session_id": session_id})
-            raise HTTPException(status_code=401, detail="Session not found or expired")
+        key_type = await redis.type(session_key)
+        key_type_str = key_type.decode() if isinstance(key_type, bytes) else str(key_type)
 
-        # 🧾 Fetch user from database
+        if key_type_str == "none":
+            log_info("Session key not found", extra={"key": session_key})
+            raise HTTPException(status_code=401, detail="Session not found")
+
+        if key_type_str != "hash":
+            await redis.delete(session_key)
+            log_error("Invalid session key type", extra={"key": session_key, "type": key_type_str})
+            raise HTTPException(status_code=401, detail="Invalid session type")
+
+        session_data = await redis.hgetall(session_key)
+        if not session_data:
+            log_error("Empty session", extra={"key": session_key})
+            raise HTTPException(status_code=401, detail="Session is empty or expired")
+
+        # 🧾 دریافت اطلاعات کاربر
         collection = (
             "admins" if role == "admin"
             else "vendors" if role == "vendor"

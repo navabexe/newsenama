@@ -1,14 +1,17 @@
 from datetime import datetime, timezone
-from fastapi import HTTPException, status
+
+from fastapi import HTTPException
 from redis.asyncio import Redis
 
 from common.logging.logger import log_info, log_error
 from common.security.jwt.decode import decode_token as decode_refresh_token
-from common.security.jwt.tokens import generate_access_token, generate_refresh_token, revoke_token
-from infrastructure.database.redis.operations.get import get
-from infrastructure.database.redis.operations.delete import delete
-from infrastructure.database.redis.operations.hset import hset
+from common.security.jwt.revoke import revoke_token
+from common.security.jwt.tokens import generate_access_token, generate_refresh_token
 from common.translations.messages import get_message
+from infrastructure.database.redis.operations.delete import delete
+from infrastructure.database.redis.operations.expire import expire
+from infrastructure.database.redis.operations.get import get
+from infrastructure.database.redis.operations.hset import hset
 
 
 async def refresh_token_service(
@@ -59,14 +62,12 @@ async def refresh_token_service(
             role=role,
             session_id=session_id,
             scopes=scopes,
-            redis=redis
         )
 
         new_refresh_token = await generate_refresh_token(
             user_id=user_id,
             role=role,
             session_id=session_id,
-            redis=redis
         )
 
         # Update session info
@@ -74,6 +75,7 @@ async def refresh_token_service(
             "ip": client_ip,
             "last_refreshed": datetime.now(timezone.utc).isoformat()
         }, redis=redis)
+        await expire(f"sessions:{user_id}:{session_id}", 86400, redis=redis)
 
         log_info("Tokens refreshed via service", extra={
             "user_id": user_id,

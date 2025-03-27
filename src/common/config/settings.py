@@ -6,8 +6,12 @@ from pydantic_settings import BaseSettings
 # Calculate base directory for consistent file paths
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 ENV_PATH = BASE_DIR / ".env"
+ENVIRONMENT: str = "development"  # "production" or "development"
+
 
 class Settings(BaseSettings):
+    ENVIRONMENT: str = "development"  # "production" or "development"
+
     # Security keys (required from .env)
     SECRET_KEY: str
     ACCESS_SECRET: str

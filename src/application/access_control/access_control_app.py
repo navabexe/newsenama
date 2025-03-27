@@ -2,7 +2,6 @@
 
 from typing import List, Optional
 from domain.access_control.access_control_module import Role, Permission, get_default_scopes_for
-from uuid import uuid4
 
 
 class AccessControlRepository:

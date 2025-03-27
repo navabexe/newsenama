@@ -1,5 +1,3 @@
-# application/auth/controllers/profile/complete_user_profile.py
-
 from fastapi import APIRouter, Request, HTTPException, status, Depends
 from pydantic import EmailStr, Field
 from redis.asyncio import Redis
@@ -37,7 +35,7 @@ async def complete_user_profile(
         )
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=get_message("server.error", data.language)

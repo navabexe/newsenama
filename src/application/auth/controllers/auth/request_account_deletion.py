@@ -17,22 +17,7 @@ async def request_account_deletion(
     redis: Redis = Depends(get_redis_client)
 ):
     """
-     درخواست حذف حساب کاربری توسط کاربر احراز شده
-
-    - این مسیر فقط برای کاربر فعال است.
-    - پس از تأیید، پیام موفقیت به همراه وضعیت برگشت داده می‌شود.
-
-    Args:
-        request (Request): FastAPI request object
-        language (str): زبان پاسخ (fa یا en)
-        current_user (dict): اطلاعات کاربر احراز شده از توکن JWT
-        redis (Redis): اتصال Redis
-
-    Returns:
-        dict: پیام موفقیت و وضعیت
-
-    Raises:
-        HTTPException: در صورت بروز خطا
+    درخواست حذف حساب کاربری توسط کاربر احراز شده
     """
     try:
         return await request_account_deletion_service(

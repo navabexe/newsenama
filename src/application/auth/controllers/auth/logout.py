@@ -32,9 +32,14 @@ async def logout(
         session_id = current_user["session_id"]
 
         if body.logout_all:
-            return await logout_service(user_id, session_id, request.client.host, redis, body.language)
+            return await logout_service(
+                user_id=user_id,
+                session_id=session_id,
+                client_ip=request.client.host,
+                language=body.language,
+                redis=redis
+            )
 
-        # فقط همین session فعلی
         await redis.delete(f"sessions:{user_id}:{session_id}")
         await redis.delete(f"refresh_tokens:{user_id}:{session_id}")
 
@@ -44,7 +49,7 @@ async def logout(
 
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=get_message("server.error", body.language)

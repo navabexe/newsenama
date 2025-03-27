@@ -1,3 +1,5 @@
+# request_otp_service.py - نسخه نهایی با rate limit و token امن
+
 import os
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -30,21 +32,18 @@ async def request_otp_service(
         if redis is None:
             redis = await get_redis_client()
 
-        # Redis Keys
         redis_key = f"otp:{role}:{phone}"
         rate_limit_1min = f"otp-limit:{role}:{phone}"
         rate_limit_10min = f"otp-limit-10min:{role}:{phone}"
         rate_limit_1h = f"otp-limit-1h:{role}:{phone}"
         block_key = f"otp-blocked:{role}:{phone}"
 
-        # Block check
         if await get(block_key, redis):
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=get_message("otp.too_many.blocked", language)
             )
 
-        # Rate limits
         if (attempts := await get(rate_limit_1min, redis)) and int(attempts) >= 3:
             raise HTTPException(status_code=429, detail=get_message("otp.too_many.1min", language))
         if (attempts := await get(rate_limit_10min, redis)) and int(attempts) >= 5:
@@ -53,21 +52,18 @@ async def request_otp_service(
             await setex(block_key, 3600, "1", redis)
             raise HTTPException(status_code=429, detail=get_message("otp.too_many.blocked", language))
 
-        # Generate OTP & token
         otp_code = generate_otp_code()
         jti = str(uuid4())
         temp_token = await generate_temp_token(phone=phone, role=role, jti=jti, redis=redis, language=language)
 
-        otp_ttl = 300  # 5 minutes
+        otp_ttl = 300  # 5 min
         await setex(redis_key, otp_ttl, otp_code, redis)
         await setex(f"temp_token:{jti}", otp_ttl, phone, redis)
 
-        # Track attempts
         for key, ttl in [(rate_limit_1min, 60), (rate_limit_10min, 600), (rate_limit_1h, 3600)]:
             await incr(key, redis)
             await expire(key, ttl, redis)
 
-        # Log
         log_data = {
             "phone": phone,
             "role": role,

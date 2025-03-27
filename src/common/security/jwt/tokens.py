@@ -6,7 +6,6 @@ from jose import jwt
 from redis.asyncio import Redis
 
 from common.config.settings import settings
-from infrastructure.database.redis.operations.setex import setex
 
 # Constants
 JWT_SECRET_KEY = settings.SECRET_KEY
@@ -35,7 +34,6 @@ async def generate_access_token(
     scopes: list[str] = None,
     user_profile: dict = None,
     language: str = "fa",
-    redis: Redis = None
 ) -> str:
     """
     Generate a structured access token with user identity payload.
@@ -78,7 +76,6 @@ async def generate_refresh_token(
     user_id: str,
     role: str,
     session_id: str,
-    redis: Redis = None
 ) -> str:
     """
     Generate refresh token with minimal payload, stored in Redis.
@@ -98,10 +95,6 @@ async def generate_refresh_token(
 
     token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=ALGORITHM)
 
-    # Optional: Store refresh token for reuse detection
-    if redis:
-        ttl = REFRESH_TOKEN_EXPIRE_DAYS * 86400
-        await setex(f"refresh_tokens:{user_id}:{session_id}", ttl, "valid", redis)
 
     return token
 

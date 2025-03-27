@@ -1,3 +1,5 @@
+# ✅ complete_profile_service اصلاح‌شده با بررسی نوع کلید Redis برای session قبل از hset
+
 from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Optional, List
@@ -12,6 +14,7 @@ from common.translations.messages import get_message
 from infrastructure.database.redis.redis_client import get_redis_client
 from infrastructure.database.redis.operations.delete import delete
 from infrastructure.database.redis.operations.hset import hset
+from infrastructure.database.redis.operations.expire import expire
 from infrastructure.database.mongodb.mongo_client import find_one, update_one, find
 from common.logging.logger import log_error
 
@@ -134,7 +137,6 @@ async def complete_profile_service(
             session_id=session_id,
             user_profile=user_profile,
             language=language,
-            redis=redis
         )
 
         result = {
@@ -149,15 +151,22 @@ async def complete_profile_service(
                 user_id=user_id,
                 role=role,
                 session_id=session_id,
-                redis=redis
             )
-            await hset(f"sessions:{user_id}:{session_id}", mapping={
+
+            session_key = f"sessions:{user_id}:{session_id}"
+            key_type = await redis.type(session_key)
+            if key_type != b'hash' and key_type != b'none':
+                await redis.delete(session_key)
+
+            await hset(session_key, mapping={
                 "ip": client_ip,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "device": "unknown",
                 "status": "active",
                 "jti": session_id
             }, redis=redis)
+            await expire(session_key, 86400, redis=redis)
+
             result["refresh_token"] = refresh_token
 
         return result

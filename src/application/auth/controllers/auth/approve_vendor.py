@@ -3,6 +3,7 @@ from redis.asyncio import Redis
 from pydantic import BaseModel, Field, ConfigDict
 
 from common.security.jwt_handler import get_current_user
+from common.translations.messages import get_message
 from domain.auth.auth_services.auth_service.approve_vendor import approve_vendor_service
 from infrastructure.database.redis.redis_client import get_redis_client
 
@@ -16,6 +17,7 @@ class ApproveVendorRequest(BaseModel):
         pattern=r"^(approve|reject)$",
         description="Action to take: approve or reject"
     )
+    language: str = Field(default="fa", description="Response language (fa/en)")
 
     model_config = ConfigDict(
         str_strip_whitespace=True,
@@ -32,18 +34,6 @@ async def approve_vendor(
 ):
     """
     Admin endpoint to approve or reject vendor profiles.
-
-    Args:
-        request (Request): FastAPI request object.
-        data (ApproveVendorRequest): Vendor approval data.
-        current_user (dict): Authenticated admin from JWT.
-        redis (Redis): Redis connection.
-
-    Returns:
-        dict: Response with status and message.
-
-    Raises:
-        HTTPException: If approval process fails.
     """
     try:
         return await approve_vendor_service(
@@ -51,14 +41,18 @@ async def approve_vendor(
             vendor_id=data.vendor_id,
             action=data.action,
             client_ip=request.client.host,
+            language=data.language,
             redis=redis
         )
     except HTTPException:
         raise
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to process vendor approval"
+            detail=get_message("server.error", data.language)
         )

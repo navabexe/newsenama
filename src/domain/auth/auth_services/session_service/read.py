@@ -1,5 +1,6 @@
-from datetime import datetime, timezone
+# domain/auth/auth_services/session_service/read.py
 
+from datetime import datetime, timezone
 from fastapi import HTTPException, status, Depends
 from redis.asyncio import Redis
 
@@ -10,19 +11,32 @@ from infrastructure.database.redis.redis_client import get_redis_client
 
 
 async def get_sessions_service(
-        user_id: str,
-        client_ip: str,
-        redis: Redis = Depends(get_redis_client)
+    user_id: str,
+    client_ip: str,
+    redis: Redis = Depends(get_redis_client)
 ) -> dict:
-    """Handle retrieval of all active sessions for a user."""
     try:
-        # Get all session keys for the user
         session_keys = await keys(f"sessions:{user_id}:*", redis)
         sessions = []
 
         for key in session_keys:
+            key_type = await redis.type(key)
+            key_type_str = key_type.decode() if isinstance(key_type, bytes) else str(key_type)
+
+            if key_type_str != 'hash':
+                log_info("Skipping non-hash key during session read", extra={
+                    "key": key,
+                    "type": key_type_str
+                })
+                continue
+
             session_data = await hgetall(key, redis)
             session_id = key.split(":")[-1]
+
+            # اگر فقط سشن‌های فعال بخوایم:
+            # if session_data.get("status") != "active":
+            #     continue
+
             sessions.append({
                 "session_id": session_id,
                 "ip": session_data.get("ip", "unknown"),
@@ -30,7 +44,6 @@ async def get_sessions_service(
                 "last_refreshed": session_data.get("last_refreshed", None)
             })
 
-        # Log success
         log_info("Sessions retrieved", extra={
             "user_id": user_id,
             "session_count": len(sessions),

@@ -8,7 +8,6 @@ from infrastructure.database.redis.operations.get import get
 from .errors import JWTError
 from .revoke import revoke_all_user_tokens
 
-
 AUDIENCE_MAP = {
     "access": "api",
     "refresh": "auth-service",
@@ -45,7 +44,6 @@ async def decode_token(
             audience=expected_aud
         )
 
-        # Validate type from inside token
         actual_type = payload.get("token_type")
         if actual_type != token_type:
             log_error("Token type mismatch", extra={"expected": token_type, "actual": actual_type})
@@ -55,8 +53,13 @@ async def decode_token(
         if not jti:
             raise JWTError("Token missing jti")
 
-        # Check blacklist
-        if await get(f"blacklist:{jti}", redis):
+        # Check blacklist key safely
+        blacklist_key = f"blacklist:{jti}"
+        key_type = await redis.type(blacklist_key)
+        if key_type != b'string' and key_type != b'none':
+            await redis.delete(blacklist_key)
+
+        if await get(blacklist_key, redis):
             log_error("Token revoked", extra={"jti": jti, "type": token_type})
             raise HTTPException(status_code=401, detail="Token revoked")
 
@@ -64,6 +67,10 @@ async def decode_token(
         if token_type == "refresh":
             user_id = payload.get("sub")
             redis_key = f"refresh_tokens:{user_id}:{jti}"
+            key_type = await redis.type(redis_key)
+            if key_type != b'string' and key_type != b'none':
+                await redis.delete(redis_key)
+
             if not await get(redis_key, redis):
                 await revoke_all_user_tokens(user_id, redis)
                 log_error("Refresh token reuse detected", extra={"user_id": user_id, "jti": jti})

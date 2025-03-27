@@ -1,5 +1,3 @@
-# 📄 application/auth/controllers/otp/request_otp.py
-
 import phonenumbers
 from fastapi import APIRouter, Request, HTTPException, status, Depends
 from pydantic import Field, model_validator
@@ -54,7 +52,7 @@ async def request_otp(
         raise
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=get_message("server.error", data.language)

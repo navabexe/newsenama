@@ -1,3 +1,5 @@
+# force_logout_service.py - نسخه اصلاح‌شده با بررسی نوع کلید Redis قبل از حذف و عملیات revoke
+
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
@@ -36,6 +38,10 @@ async def force_logout_service(
         revoked_sessions = 0
 
         for key in session_keys:
+            key_type = await redis.type(key)
+            if key_type != b'hash':
+                continue
+
             session_data = await hgetall(key, redis=redis)
             await delete(key, redis=redis)
             revoked_sessions += 1

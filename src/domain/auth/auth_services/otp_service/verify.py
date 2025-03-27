@@ -1,4 +1,4 @@
-# domain/auth/auth_services/otp_service/verify.py
+# domain/auth/auth_services/otp_service/verify.py - نسخه اصلاح شده
 
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -18,6 +18,7 @@ from infrastructure.database.mongodb.mongo_client import find_one, insert_one, u
 from infrastructure.database.redis.operations.delete import delete
 from infrastructure.database.redis.operations.get import get
 from infrastructure.database.redis.operations.hset import hset
+from infrastructure.database.redis.operations.expire import expire
 from infrastructure.database.redis.redis_client import get_redis_client
 
 
@@ -103,7 +104,6 @@ async def verify_otp_service(
                 status="incomplete",
                 phone_verified=True,
                 language=language,
-                redis=redis
             )
             await redis.setex(f"temp_token:{new_jti}", 86400, phone)
             return {
@@ -123,7 +123,6 @@ async def verify_otp_service(
                 status="pending",
                 phone_verified=True,
                 language=language,
-                redis=redis
             )
             await redis.setex(f"temp_token:{new_jti}", 86400, phone)
             return {
@@ -142,21 +141,27 @@ async def verify_otp_service(
                 session_id=session_id,
                 user_profile=user_profile,
                 language=language,
-                redis=redis
             )
             refresh_token = await generate_refresh_token(
                 user_id=user_id,
                 role=role,
                 session_id=session_id,
-                redis=redis
             )
-            await hset(f"sessions:{user_id}:{session_id}", mapping={
+
+            session_key = f"sessions:{user_id}:{session_id}"
+            key_type = await redis.type(session_key)
+            if key_type != b'hash' and key_type != b'none':
+                await redis.delete(session_key)
+
+            await hset(session_key, mapping={
                 "ip": client_ip,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "device": "unknown",
                 "status": "active",
                 "jti": session_id
             }, redis=redis)
+            await expire(session_key, 86400, redis=redis)
+
             return {
                 "access_token": access_token,
                 "refresh_token": refresh_token,

@@ -41,8 +41,8 @@ async def force_logout(
             current_user=current_user,
             target_user_id=data.target_user_id,
             client_ip=request.client.host,
-            redis=redis,
-            language=data.language
+            language=data.language,
+            redis=redis
         )
 
     except HTTPException:

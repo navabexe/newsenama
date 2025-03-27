@@ -1,4 +1,4 @@
-# 📄 domain/auth/auth_services/auth_service/login.py
+# login_service.py - نسخه اصلاح‌شده با بررسی نوع کلید Redis قبل از hset
 
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -12,7 +12,7 @@ from common.security.password import verify_password
 from common.security.permissions_loader import get_scopes_for_role
 from infrastructure.database.mongodb.mongo_client import find_one
 from infrastructure.database.redis.operations.hset import hset
-from infrastructure.database.redis.operations.setex import setex
+from infrastructure.database.redis.operations.expire import expire
 from infrastructure.database.redis.redis_client import get_redis_client
 
 
@@ -24,9 +24,6 @@ async def login_service(
     language: str = "fa",
     redis: Redis = None
 ) -> dict:
-    """
-    Unified login service for users, vendors, and admins.
-    """
     try:
         if redis is None:
             redis = await get_redis_client()
@@ -39,7 +36,6 @@ async def login_service(
         phone = phone.strip() if phone else None
         username = username.strip().lower() if username else None
 
-        # Search user in collections
         user = None
         collection = None
         if phone:
@@ -70,7 +66,6 @@ async def login_service(
         user_id = str(user["_id"])
         role = user.get("role", "admin" if collection == "admins" else "vendor" if collection == "vendors" else "user")
         session_id = str(uuid4())
-
         scopes = get_scopes_for_role(role, user.get("status"))
 
         user_profile = {
@@ -92,18 +87,20 @@ async def login_service(
             session_id=session_id,
             scopes=scopes,
             user_profile=user_profile,
-            language=language,
-            redis=redis
+            language=language
         )
 
         refresh_token = await generate_refresh_token(
             user_id=user_id,
             role=role,
             session_id=session_id,
-            redis=redis
         )
 
         session_key = f"sessions:{user_id}:{session_id}"
+        key_type = await redis.type(session_key)
+        if key_type != b'hash' and key_type != b'none':
+            await redis.delete(session_key)
+
         await hset(session_key, mapping={
             "ip": client_ip,
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -113,7 +110,7 @@ async def login_service(
         }, redis=redis)
 
         if role == "admin":
-            await setex(session_key, 86400, "active", redis)
+            await expire(session_key, 86400, redis=redis)
 
         log_info("Login successful", extra={
             "user_id": user_id,

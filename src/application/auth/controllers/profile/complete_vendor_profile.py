@@ -1,5 +1,3 @@
-# application/auth/controllers/profile/complete_vendor_profile.py
-
 from fastapi import APIRouter, Request, HTTPException, status, Depends
 from redis.asyncio import Redis
 
@@ -24,7 +22,7 @@ async def complete_vendor_profile(
             owner_name=data.owner_name,
             city=data.city,
             province=data.province,
-            location=data.location.dict() if data.location else None,
+            location=data.location.model_dump() if data.location else None,
             address=data.address,
             business_category_ids=data.business_category_ids,
             client_ip=request.client.host,
@@ -33,7 +31,7 @@ async def complete_vendor_profile(
         )
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=get_message("server.error", data.language)

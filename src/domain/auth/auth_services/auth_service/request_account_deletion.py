@@ -1,3 +1,5 @@
+# request_account_deletion_service.py - نسخه کامل‌شده با اتصال Redis امن
+
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
@@ -7,6 +9,7 @@ from common.logging.logger import log_info, log_error
 from common.translations.messages import get_message
 from common.security.jwt_handler import revoke_all_user_tokens
 from infrastructure.database.mongodb.mongo_client import update_one
+from infrastructure.database.redis.redis_client import get_redis_client
 
 
 async def request_account_deletion_service(
@@ -16,12 +19,8 @@ async def request_account_deletion_service(
     language: str = "fa",
     redis: Redis = None
 ) -> dict:
-    """
-    Handles logic for marking a user account for deletion and revoking all sessions/tokens.
-    """
     try:
         if redis is None:
-            from infrastructure.database.redis.redis_client import get_redis_client
             redis = await get_redis_client()
 
         collection = f"{role}s"
