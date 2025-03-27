@@ -1,33 +1,59 @@
 # common/config/settings.py
 from pathlib import Path
 
-from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
 
-BASE_DIR = Path(__file__).parent.parent.parent.parent
-env_path = BASE_DIR / ".env"
-
-
-print("Trying to load .env from:", env_path)
-load_dotenv(dotenv_path=env_path)
+# Calculate base directory for consistent file paths
+BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
+ENV_PATH = BASE_DIR / ".env"
 
 class Settings(BaseSettings):
+    # Security keys (required from .env)
     SECRET_KEY: str
     ACCESS_SECRET: str
     REFRESH_SECRET: str
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
-    ALGORITHM: str = "HS256"
-    TEMP_TOKEN_TTL: int = 300
-    ACCESS_TTL: int = 900
-    REFRESH_TTL: int = 86400
+    SMS_PANEL_KEY: str
+
+    # Token expiration settings (required from .env, add to .env if needed)
+    ACCESS_TOKEN_EXPIRE_MINUTES: int
+    ALGORITHM: str
+    TEMP_TOKEN_TTL: int
+    ACCESS_TTL: int
+    REFRESH_TTL: int
+    REFRESH_TOKEN_EXPIRE_DAYS: int
+    TEMP_TOKEN_EXPIRE_MINUTES: int
+
+    # MongoDB settings (required from .env)
     MONGO_URI: str
     MONGO_DB: str
-    MONGO_TIMEOUT: int = 5000
+    MONGO_TIMEOUT: int
+
+    # SMS settings (required from .env)
+    MOCK_SMS: bool
+
+    # Admin credentials (required from .env)
+    ADMIN_USERNAME: str
+    ADMIN_PASSWORD: str
+
+    # Redis settings (required from .env)
+    REDIS_HOST: str
+    REDIS_PORT: int
+    REDIS_DB: int
+    REDIS_SSL_CA_CERTS: str
+    REDIS_SSL_CERT: str
+    REDIS_SSL_KEY: str
+    REDIS_USE_SSL: str
+
+    # HTTPS settings (required from .env)
+    SSL_CERT_FILE: str
+    SSL_KEY_FILE: str
 
     class Config:
-        env_file = ".env"
+        # Load environment variables from .env file
+        env_file = ENV_PATH
         env_file_encoding = "utf-8"
         case_sensitive = True
 
 
+# Instantiate settings object
 settings = Settings()

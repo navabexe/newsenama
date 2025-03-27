@@ -1,12 +1,26 @@
-# File: application/auth/controllers/auth/sessions.py
+from fastapi import APIRouter, Request, Depends, HTTPException, status
+from redis.asyncio import Redis
 
-from fastapi import APIRouter, Request, Depends
 from common.security.jwt_handler import get_current_user
+from common.translations.messages import get_message
 from domain.auth.auth_services.session_service.read import get_sessions_service
+from infrastructure.database.redis.redis_client import get_redis_client
 
-router = APIRouter(prefix="/auth", tags=["Authentication"])
+router = APIRouter()
 
-@router.get("/sessions", status_code=200)
-async def get_sessions(request: Request, current_user: dict = Depends(get_current_user)):
-    """Retrieve all active sessions for the current user."""
-    return await get_sessions_service(current_user["user_id"], request.client.host)
+
+@router.get("/sessions", status_code=status.HTTP_200_OK)
+async def get_sessions(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    redis: Redis = Depends(get_redis_client)
+):
+    try:
+        return await get_sessions_service(current_user["user_id"], request.client.host, redis)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=get_message("server.error", "fa")
+        )

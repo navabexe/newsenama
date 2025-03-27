@@ -1,5 +1,7 @@
 from fastapi import HTTPException
-from infrastructure.database.redis.redis_client import redis
+
+from infrastructure.database import redis
+
 
 def check_redis():
     if redis is None:

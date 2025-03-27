@@ -1,13 +1,18 @@
-# File: domain/auth/auth_services/auth_service/approve_vendor.py
-
-from fastapi import HTTPException, status, Depends
-from common.security.jwt_handler import generate_access_token, generate_refresh_token
-from common.security.permissions_loader import get_scopes_for_role
-from infrastructure.database.mongodb.mongo_client import find_one, update_one, insert_one
-from infrastructure.database.redis.redis_client import delete, keys
-from common.logging.logger import log_info, log_error
 from datetime import datetime, timezone
 from uuid import uuid4
+
+from bson import ObjectId
+from fastapi import HTTPException, status
+from redis.asyncio import Redis
+
+from common.logging.logger import log_info, log_error
+from common.translations.messages import get_message
+from common.security.permissions_loader import get_scopes_for_role
+from common.security.jwt.tokens import generate_access_token, generate_refresh_token
+from infrastructure.database.mongodb.mongo_client import find_one, update_one, insert_one
+from infrastructure.database.redis.operations.delete import delete
+from infrastructure.database.redis.operations.keys import keys
+
 
 async def notify_vendor_of_status(vendor_id: str, phone: str, status: str, client_ip: str):
     try:
@@ -28,57 +33,87 @@ async def notify_vendor_of_status(vendor_id: str, phone: str, status: str, clien
         log_error("Failed to notify vendor", extra={"vendor_id": vendor_id, "error": str(e)})
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to notify vendor")
 
+
 async def approve_vendor_service(
     current_user: dict,
     vendor_id: str,
     action: str,
-    client_ip: str
+    client_ip: str,
+    redis: Redis,
+    language: str = "fa"
 ) -> dict:
     try:
-        if current_user["role"] != "admin":
-            log_error("Unauthorized approval attempt", extra={"user_id": current_user["user_id"], "vendor_id": vendor_id})
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+        if current_user.get("role") != "admin":
+            log_error("Unauthorized approval attempt", extra={"user_id": current_user.get("user_id"), "vendor_id": vendor_id})
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=get_message("token.invalid", language))
 
-        vendor = await find_one("vendors", {"_id": vendor_id})
-        if not vendor or vendor["status"] != "pending":
-            log_error("Vendor not found or not pending", extra={"vendor_id": vendor_id, "ip": client_ip})
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Vendor not eligible for approval")
+        if not ObjectId.is_valid(vendor_id):
+            raise HTTPException(status_code=400, detail="Invalid vendor ID format")
+
+        vendor = await find_one("vendors", {"_id": ObjectId(vendor_id)})
+        if not vendor or vendor.get("status") != "pending":
+            raise HTTPException(status_code=400, detail="Vendor is not pending approval")
 
         new_status = "active" if action == "approve" else "rejected"
         update_data = {
             "status": new_status,
             "updated_at": datetime.now(timezone.utc),
-            "updated_by": current_user["user_id"]
+            "updated_by": current_user.get("user_id")
         }
+
         if action == "approve":
             update_data["account_verified"] = True
 
-        modified_count = await update_one("vendors", {"_id": vendor_id}, update_data)
-        if modified_count == 0:
-            log_error("Failed to update vendor status", extra={"vendor_id": vendor_id, "ip": client_ip})
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update status")
+        updated = await update_one("vendors", {"_id": ObjectId(vendor_id)}, update_data)
+        if updated == 0:
+            raise HTTPException(status_code=500, detail="Failed to update vendor status")
 
         if action == "reject":
-            temp_keys = keys(f"temp_token:*:{vendor['phone']}")
+            temp_keys = await keys(f"temp_token:*:{vendor['phone']}", redis=redis)
             for key in temp_keys:
-                delete(key)
+                await delete(key, redis=redis)
                 log_info("Temp token deleted", extra={"vendor_id": vendor_id, "key": key})
 
-        await notify_vendor_of_status(vendor_id, vendor["phone"], new_status, client_ip)
+        await notify_vendor_of_status(str(vendor["_id"]), vendor["phone"], new_status, client_ip)
 
-        response = {"message": f"Vendor {action}ed successfully"}
+        result = {
+            "status": new_status,
+            "message": f"Vendor {action}ed successfully"
+        }
+
         if action == "approve":
             session_id = str(uuid4())
-            vendor_status = new_status
-            scopes = get_scopes_for_role("vendor", vendor_status)
+            scopes = get_scopes_for_role("vendor", new_status)
+
+            user_profile = {
+                "first_name": str(vendor.get("owner_name")) if vendor.get("owner_name") else None,
+                "phone": vendor.get("phone"),
+                "business_name": vendor.get("business_name"),
+                "location": vendor.get("location"),
+                "address": vendor.get("address"),
+                "status": new_status,
+                "business_category_ids": vendor.get("business_category_ids", []),
+                "profile_picture": str(vendor.get("profile_picture")) if vendor.get("profile_picture") else None
+            }
+
             access_token = await generate_access_token(
-                user_id=vendor_id,
+                user_id=str(vendor["_id"]),
                 role="vendor",
                 session_id=session_id,
-                scopes=scopes
+                user_profile=user_profile,
+                language=language,
+                scopes=scopes,
+                redis=redis
             )
-            refresh_token = await generate_refresh_token(vendor_id, "vendor", session_id)
-            response.update({
+
+            refresh_token = await generate_refresh_token(
+                user_id=str(vendor["_id"]),
+                role="vendor",
+                session_id=session_id,
+                redis=redis
+            )
+
+            result.update({
                 "access_token": access_token,
                 "refresh_token": refresh_token
             })
@@ -86,14 +121,15 @@ async def approve_vendor_service(
         log_info(f"Vendor {action}ed", extra={
             "vendor_id": vendor_id,
             "new_status": new_status,
-            "admin_id": current_user["user_id"],
+            "admin_id": current_user.get("user_id"),
             "ip": client_ip,
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
-        return response
 
-    except HTTPException as e:
-        raise e
+        return result
+
+    except HTTPException:
+        raise
     except Exception as e:
         log_error("Vendor approval failed", extra={"vendor_id": vendor_id, "error": str(e), "ip": client_ip})
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to process approval")
+        raise HTTPException(status_code=500, detail=get_message("server.error", language))

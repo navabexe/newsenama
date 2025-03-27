@@ -1,7 +1,9 @@
-from pydantic.v1 import BaseModel, Field
-from typing import List, Optional, Dict
 from datetime import datetime, UTC
 from enum import Enum
+from typing import List, Optional
+
+from pydantic.v1 import BaseModel, Field
+
 
 class OrderStatus(str, Enum):
     PENDING = "pending"

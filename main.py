@@ -1,36 +1,49 @@
-# File: main.py
+# main.py
+from contextlib import asynccontextmanager
+
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, PlainTextResponse
 from starlette.responses import JSONResponse
-from contextlib import asynccontextmanager
-from common.logging.logger import log_info, log_error
-from dotenv import load_dotenv
-from infrastructure.setup.initial_setup import setup_admin_and_categories
-from infrastructure.database.mongodb.connection import MongoDBConnection
-from infrastructure.database.mongodb.repository import MongoRepository
 
-# === Import Routers ===
+from application.access_control.controllers.access_control import router as access_control_router
+# Import routers
 from application.auth.controllers.auth_controller import router as auth_router
 from application.users.controllers.profile.set_username import router as username_router
-from application.access_control.controllers.access_control import router as access_control_router
+from common.logging.logger import log_info, log_error
+from infrastructure.database.mongodb.connection import MongoDBConnection
+from infrastructure.database.mongodb.repository import MongoRepository
+from infrastructure.database.redis.redis_client import init_redis_pool, close_redis_pool
+from infrastructure.setup.initial_setup import setup_admin_and_categories
 
 load_dotenv()
 
-# === Lifespan Handler ===
+
+# Lifespan handler for startup and shutdown
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup logic
-    await MongoDBConnection.connect()  # اتصال به MongoDB
-    db = MongoDBConnection.get_db()
-    admins_repo = MongoRepository(db, "admins")
-    categories_repo = MongoRepository(db, "business_categories")
-    await setup_admin_and_categories(admins_repo, categories_repo)  # پاس دادن رپوزیتوری‌ها
-    log_info("Senama API started", extra={"version": "1.0.0"})
+    try:
+        # Initialize MongoDB
+        await MongoDBConnection.connect()
+        db = MongoDBConnection.get_db()
+        admins_repo = MongoRepository(db, "admins")
+        categories_repo = MongoRepository(db, "business_categories")
+        await setup_admin_and_categories(admins_repo, categories_repo)
+
+        # Initialize Redis
+        await init_redis_pool()
+
+        log_info("Senama API started", extra={"version": "1.0.0"})
+    except Exception as e:
+        log_error("Startup failed", extra={"error": str(e)})
+        raise
     yield
-    # Shutdown logic
-    await MongoDBConnection.disconnect()  # بستن اتصال
+    # Cleanup on shutdown
+    await MongoDBConnection.disconnect()
+    await close_redis_pool()
     log_info("Senama API stopped")
+
 
 app = FastAPI(
     title="Senama Marketplace API",
@@ -41,16 +54,17 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# === CORS (for frontend dev) ===
+# CORS middleware (restrict origins in production)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: restrict this in production
+    allow_origins=["http://localhost:3000"],  # Example for dev, update for production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# === Global Exception Handler ===
+
+# Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     log_error("Unhandled exception", extra={
@@ -63,23 +77,27 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": "Internal server error"},
     )
 
-# === Include Routers ===
+
+# Include API routers
 app.include_router(auth_router)
 app.include_router(access_control_router)
 app.include_router(username_router, prefix="/profile")
 
-# === Root Endpoint ===
+
+# Root endpoint redirecting to docs
 @app.get("/", response_class=RedirectResponse)
 async def root():
     return RedirectResponse(url="/docs")
 
-# === Favicon Endpoint ===
+
+# Favicon endpoint (empty response)
 @app.get("/favicon.ico", response_class=PlainTextResponse)
 async def favicon():
     return ""
 
-# === Health Check Endpoint ===
+
+# Health check endpoint
 @app.get("/health", status_code=200)
 async def health_check():
-    from datetime import datetime, timezone  # Local import to avoid circular issues
+    from datetime import datetime, timezone
     return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}

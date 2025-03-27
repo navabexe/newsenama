@@ -1,55 +1,76 @@
-# File: domain/auth/auth_services/auth_service/logout.py
+from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
-from common.security.jwt_handler import revoke_token
-from infrastructure.database.redis.redis_client import delete, get
+from redis.asyncio import Redis
+
 from common.logging.logger import log_info, log_error
-from datetime import datetime, timezone
-from infrastructure.database.redis.redis_client import hgetall  # اضافه کن
+from common.security.jwt_handler import revoke_token
+from infrastructure.database.redis.operations.delete import delete
+from infrastructure.database.redis.operations.hgetall import hgetall
+from infrastructure.database.redis.operations.keys import keys
+from infrastructure.database.redis.redis_client import get_redis_client
+from common.translations.messages import get_message
 
 
-async def logout_service(user_id: str, session_id: str, client_ip: str) -> dict:
+async def logout_service(
+    user_id: str,
+    session_id: str,
+    client_ip: str,
+    redis: Redis = None,
+    language: str = "fa"
+) -> dict:
+    """
+    Logout from all user sessions and revoke tokens (access + refresh).
+    """
     try:
-        session_key = f"sessions:{user_id}:{session_id}"
-        refresh_token_key = f"refresh_tokens:{user_id}:{session_id}"
+        if redis is None:
+            redis = await get_redis_client()
 
-        # Check if session exists
-        session_data = hgetall(session_key)
-        if not session_data:
-            log_error("Session not found", extra={"user_id": user_id, "session_id": session_id, "ip": client_ip})
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Session not found")
+        revoked_sessions = 0
+        revoked_refresh_tokens = 0
 
-        # Delete session
-        delete(session_key)
+        # Revoke all sessions
+        session_keys = await keys(f"sessions:{user_id}:*", redis=redis)
+        for key in session_keys:
+            session_data = await hgetall(key, redis=redis)
+            await delete(key, redis=redis)
+            revoked_sessions += 1
 
-        # Revoke refresh token (if present)
-        if get(refresh_token_key):
-            delete(refresh_token_key)
-            revoke_token(session_id, 86400)
+            jti = session_data.get("jti") if isinstance(session_data, dict) else None
+            if jti:
+                await revoke_token(jti, ttl=900, redis=redis)
 
-        # Revoke access token via jti (optional, if sent in payload)
-        jti = session_data.get("jti") if isinstance(session_data, dict) else None
-        if jti:
-            revoke_token(jti, 900)  # Match access TTL
+        # Revoke all refresh tokens
+        refresh_keys = await keys(f"refresh_tokens:{user_id}:*", redis=redis)
+        for rkey in refresh_keys:
+            await delete(rkey, redis=redis)
+            jti = rkey.split(":")[-1]
+            if jti:
+                await revoke_token(jti, ttl=86400, redis=redis)
+            revoked_refresh_tokens += 1
 
-        log_info("Logout successful", extra={
+        log_info("User fully logged out", extra={
             "user_id": user_id,
-            "session_id": session_id,
+            "revoked_sessions": revoked_sessions,
+            "revoked_refresh_tokens": revoked_refresh_tokens,
             "ip": client_ip,
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
 
         return {
-            "message": "Logout successful"
+            "message": get_message("auth.logout.all", language),
+            "revoked_sessions": revoked_sessions,
+            "revoked_refresh_tokens": revoked_refresh_tokens
         }
 
-    except HTTPException as e:
-        raise e
     except Exception as e:
         log_error("Logout failed", extra={
-            "user_id": user_id if "user_id" in locals() else "unknown",
-            "session_id": session_id if "session_id" in locals() else "unknown",
+            "user_id": user_id,
+            "session_id": session_id,
             "error": str(e),
             "ip": client_ip
-        })
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to logout")
+        }, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=get_message("server.error", language)
+        )

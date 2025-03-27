@@ -1,19 +1,27 @@
-# File: domain/auth/auth_services/session_service/read.py
-
-from fastapi import HTTPException, status
-from infrastructure.database.redis.redis_client import keys, hgetall
-from common.logging.logger import log_info, log_error
 from datetime import datetime, timezone
 
-async def get_sessions_service(user_id: str, client_ip: str) -> dict:
+from fastapi import HTTPException, status, Depends
+from redis.asyncio import Redis
+
+from common.logging.logger import log_info, log_error
+from infrastructure.database.redis.operations.hgetall import hgetall
+from infrastructure.database.redis.operations.keys import keys
+from infrastructure.database.redis.redis_client import get_redis_client
+
+
+async def get_sessions_service(
+        user_id: str,
+        client_ip: str,
+        redis: Redis = Depends(get_redis_client)
+) -> dict:
     """Handle retrieval of all active sessions for a user."""
     try:
         # Get all session keys for the user
-        session_keys = keys(f"sessions:{user_id}:*")
+        session_keys = await keys(f"sessions:{user_id}:*", redis)
         sessions = []
 
         for key in session_keys:
-            session_data = hgetall(key)
+            session_data = await hgetall(key, redis)
             session_id = key.split(":")[-1]
             sessions.append({
                 "session_id": session_id,

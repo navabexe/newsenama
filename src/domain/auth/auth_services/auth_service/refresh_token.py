@@ -1,30 +1,96 @@
-# === SERVICE: refresh_token.py ===
+from datetime import datetime, timezone
+from fastapi import HTTPException, status
+from redis.asyncio import Redis
 
-from fastapi import HTTPException
-from infrastructure.database.redis.redis_client import get
+from common.logging.logger import log_info, log_error
 from common.security.jwt.decode import decode_token as decode_refresh_token
-from common.security.jwt.tokens import generate_access_token
+from common.security.jwt.tokens import generate_access_token, generate_refresh_token, revoke_token
+from infrastructure.database.redis.operations.get import get
+from infrastructure.database.redis.operations.delete import delete
+from infrastructure.database.redis.operations.hset import hset
+from common.translations.messages import get_message
 
-async def generate_new_access_token(refresh_token: str) -> str:
+
+async def refresh_token_service(
+    refresh_token: str,
+    client_ip: str,
+    language: str = "fa",
+    redis: Redis = None
+) -> dict:
+    """
+    Refresh access and refresh token by validating the existing refresh token.
+
+    Args:
+        refresh_token (str): The current refresh token.
+        client_ip (str): Client IP address.
+        language (str): Response language.
+        redis (Redis): Redis instance.
+
+    Returns:
+        dict: New access/refresh tokens with status and message.
+    """
     try:
-        payload = decode_refresh_token(refresh_token, token_type="refresh")
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid refresh token")
+        if redis is None:
+            from infrastructure.database.redis.redis_client import get_redis_client
+            redis = await get_redis_client()
 
-    user_id = payload.get("sub")
-    role = payload.get("role")
-    session_id = payload.get("session_id")
+        payload = await decode_refresh_token(refresh_token, token_type="refresh", redis=redis)
 
-    if not user_id or not role or not session_id:
-        raise HTTPException(status_code=400, detail="Malformed token")
+        user_id = payload.get("sub")
+        role = payload.get("role")
+        old_jti = payload.get("jti")
+        session_id = payload.get("session_id")
+        scopes = payload.get("scopes", [])
 
-    session_key = f"sessions:{user_id}:{session_id}"
-    if not get(session_key):
-        raise HTTPException(status_code=401, detail="Session is no longer active")
+        if not all([user_id, role, old_jti, session_id]):
+            raise HTTPException(status_code=400, detail=get_message("token.invalid", language))
 
-    return await generate_access_token(
-        user_id=user_id,
-        role=role,
-        session_id=session_id,
-        scopes=payload.get("scopes")  # Optional: preserve original scopes
-    )
+        redis_key = f"refresh_tokens:{user_id}:{old_jti}"
+        if not await get(redis_key, redis):
+            raise HTTPException(status_code=401, detail=get_message("token.expired", language))
+
+        # Revoke old refresh token
+        await delete(redis_key, redis)
+        await revoke_token(old_jti, ttl=7 * 24 * 60 * 60, redis=redis)
+
+        # Generate new tokens
+        access_token = await generate_access_token(
+            user_id=user_id,
+            role=role,
+            session_id=session_id,
+            scopes=scopes,
+            redis=redis
+        )
+
+        new_refresh_token = await generate_refresh_token(
+            user_id=user_id,
+            role=role,
+            session_id=session_id,
+            redis=redis
+        )
+
+        # Update session info
+        await hset(f"sessions:{user_id}:{session_id}", mapping={
+            "ip": client_ip,
+            "last_refreshed": datetime.now(timezone.utc).isoformat()
+        }, redis=redis)
+
+        log_info("Tokens refreshed via service", extra={
+            "user_id": user_id,
+            "role": role,
+            "session_id": session_id,
+            "ip": client_ip
+        })
+
+        return {
+            "access_token": access_token,
+            "refresh_token": new_refresh_token,
+            "message": get_message("token.refreshed", language),
+            "status": "refreshed"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error("Refresh token service failed", extra={"error": str(e), "ip": client_ip}, exc_info=True)
+        raise HTTPException(status_code=500, detail=get_message("server.error", language))
