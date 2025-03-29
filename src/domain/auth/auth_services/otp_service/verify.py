@@ -16,6 +16,16 @@ from infrastructure.database.redis.operations.get import get
 from infrastructure.database.redis.operations.hset import hset
 from infrastructure.database.redis.operations.expire import expire
 from infrastructure.database.redis.redis_client import get_redis_client
+from infrastructure.database.redis.operations.scan import scan_keys
+
+
+async def delete_incomplete_sessions(user_id: str, redis: Redis):
+    session_keys = await scan_keys(redis, f"sessions:{user_id}:*")
+    for key in session_keys:
+        session_data = await redis.hgetall(key)
+        status = session_data.get(b"status")
+        if status and status.decode() != "active":
+            await redis.delete(key)
 
 
 async def verify_otp_service(
@@ -117,6 +127,8 @@ async def verify_otp_service(
             }
 
         elif status == "active":
+            await delete_incomplete_sessions(user_id, redis)
+
             session_id = str(uuid4())
             access_payload = build_jwt_payload(
                 token_type="access",

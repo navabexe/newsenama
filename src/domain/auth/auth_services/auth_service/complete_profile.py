@@ -14,6 +14,7 @@ from infrastructure.database.redis.redis_client import get_redis_client
 from infrastructure.database.redis.operations.delete import delete
 from infrastructure.database.redis.operations.hset import hset
 from infrastructure.database.redis.operations.expire import expire
+from infrastructure.database.redis.operations.scan import scan_keys
 from infrastructure.database.mongodb.mongo_client import find_one, update_one, find
 from common.logging.logger import log_error
 
@@ -41,6 +42,12 @@ def normalize_vendor_data(data: dict) -> dict:
     }
 
 
+async def delete_all_sessions(user_id: str, redis: Redis):
+    session_keys = await scan_keys(redis, f"sessions:{user_id}:*")
+    for key in session_keys:
+        await redis.delete(key)
+
+
 async def complete_profile_service(
     temporary_token: str,
     first_name: Optional[str] = None,
@@ -56,7 +63,7 @@ async def complete_profile_service(
     vendor_type: Optional[str] = None,
     languages: Optional[List[str]] = None,
     client_ip: str = "unknown",
-    language: str = "fa",  # فقط برای پیام‌ها
+    language: str = "fa",
     redis: Redis = None
 ) -> dict:
     try:
@@ -73,6 +80,23 @@ async def complete_profile_service(
         temp_key = f"temp_token:{jti}"
         if await redis.get(temp_key) != phone:
             raise HTTPException(status_code=401, detail=get_message("otp.expired", language))
+
+        is_vendor_data = any([
+            bool(business_name),
+            bool(business_category_ids),
+            bool(city),
+            bool(province),
+            bool(location),
+            bool(address),
+            bool(vendor_type),
+            bool(visibility and visibility != "COLLABORATIVE")
+        ])
+
+        if role == "user" and is_vendor_data:
+            raise HTTPException(status_code=403, detail=get_message("access.denied", language))
+
+        if role == "vendor" and not business_name:
+            raise HTTPException(status_code=400, detail=get_message("vendor.not_eligible", language))
 
         collection = f"{role}s"
         user = await find_one(collection, {"phone": phone})
@@ -134,6 +158,8 @@ async def complete_profile_service(
                 status = "pending"
 
         await delete(temp_key, redis)
+        await delete_all_sessions(user_id, redis)  # 🧼 Delete any pre-existing sessions
+
         session_id = str(uuid4())
 
         if role == "vendor":
