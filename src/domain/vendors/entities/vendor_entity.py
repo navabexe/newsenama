@@ -1,4 +1,6 @@
-from pydantic.v1 import BaseModel, Field
+# domain/vendors/entities/vendor_model.py
+
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
 from datetime import datetime, UTC
 from enum import Enum
@@ -62,32 +64,36 @@ class Vendor(BaseModel):
     id: Optional[str] = None
     username: str
     names: List[VendorName]
-    owner_name: str
+    first_name: str
+    last_name: str
     owner_phone: str
     address: str
     location: Location
     city: str
     province: str
+
     logo_urls: List[str] = Field(default_factory=list)
     banner_urls: List[str] = Field(default_factory=list)
     short_descriptions: List[VendorDescription] = Field(default_factory=list)
     about_us: List[VendorDescription] = Field(default_factory=list)
     branches: List[Branch] = Field(default_factory=list)
     business_details: List[BusinessDetail] = Field(default_factory=list)
+
     visibility: VendorVisibility = VendorVisibility.PUBLIC
     status: VendorStatus = VendorStatus.PENDING
+
     attached_vendor_ids: List[str] = Field(default_factory=list)
     blocked_vendor_ids: List[str] = Field(default_factory=list)
     account_types: List[str] = Field(default_factory=lambda: ["free"])
-    vendor_type: Optional[str] = Field(default="basic")
+    vendor_type: Optional[str] = "basic"
+
     social_links: List[SocialLink] = Field(default_factory=list)
     messenger_links: List[MessengerLink] = Field(default_factory=list)
-    show_followers_publicly: bool = True  # if False → followers hidden from other vendors
+    show_followers_publicly: bool = True
 
     terms_version: Optional[str] = "v1.0"
     accepted_terms_at: Optional[str] = None
 
-    # Counters
     products_count: int = 0
     followers_count: int = 0
     following_count: int = 0
@@ -97,6 +103,7 @@ class Vendor(BaseModel):
     products_attached_from_others_count: int = 0
 
     business_category_ids: List[str] = Field(default_factory=list)
+
     created_by: str
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_by: Optional[str] = None

@@ -1,5 +1,3 @@
-# ✅ complete_profile_service اصلاح‌شده با بررسی نوع کلید Redis برای session قبل از hset
-
 from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Optional, List
@@ -11,6 +9,7 @@ from bson import ObjectId
 from common.security.jwt.tokens import generate_access_token, generate_refresh_token
 from common.security.jwt.decode import decode_token
 from common.translations.messages import get_message
+from domain.auth.entities.token_entity import VendorJWTProfile, UserJWTProfile
 from infrastructure.database.redis.redis_client import get_redis_client
 from infrastructure.database.redis.operations.delete import delete
 from infrastructure.database.redis.operations.hset import hset
@@ -31,27 +30,39 @@ async def validate_business_categories(category_ids: List[str]) -> None:
         )
 
 
+def normalize_vendor_data(data: dict) -> dict:
+    return {
+        **data,
+        "logo_urls": data.get("logo_urls") or [],
+        "banner_urls": data.get("banner_urls") or [],
+        "preferred_languages": data.get("preferred_languages") or [],
+        "account_types": data.get("account_types") or [],
+        "show_followers_publicly": data.get("show_followers_publicly", True),
+    }
+
+
 async def complete_profile_service(
     temporary_token: str,
     first_name: Optional[str] = None,
     last_name: Optional[str] = None,
     email: Optional[str] = None,
     business_name: Optional[str] = None,
-    owner_name: Optional[str] = None,
     city: Optional[str] = None,
     province: Optional[str] = None,
     location: Optional[dict] = None,
     address: Optional[str] = None,
     business_category_ids: Optional[List[str]] = None,
+    visibility: Optional[str] = "COLLABORATIVE",
+    vendor_type: Optional[str] = None,
+    languages: Optional[List[str]] = None,
     client_ip: str = "unknown",
-    language: str = "fa",
+    language: str = "fa",  # فقط برای پیام‌ها
     redis: Redis = None
 ) -> dict:
     try:
-        if redis is None:
-            redis = await get_redis_client()
-
+        redis = redis or await get_redis_client()
         payload = await decode_token(temporary_token, token_type="temp", redis=redis)
+
         phone = payload.get("sub")
         role = payload.get("role")
         jti = payload.get("jti")
@@ -66,51 +77,58 @@ async def complete_profile_service(
         collection = f"{role}s"
         user = await find_one(collection, {"phone": phone})
         if not user or user.get("status") not in ["incomplete", "pending"]:
-            raise HTTPException(status_code=400, detail=get_message("vendor.not_eligible", language))
+            msg_key = "user.not_eligible" if role == "user" else "vendor.not_eligible"
+            raise HTTPException(status_code=400, detail=get_message(msg_key, language))
 
         user_id = str(user["_id"])
         update_data = {"updated_at": datetime.now(timezone.utc)}
 
         if role == "user":
-            if not all([first_name, last_name, email]):
+            if not all([first_name, last_name]):
                 raise HTTPException(status_code=400, detail="Missing user profile fields")
             update_data.update({
-                "first_name": str(first_name).strip(),
-                "last_name": str(last_name).strip(),
-                "email": str(email).strip().lower(),
-                "status": "active"
+                "first_name": first_name.strip(),
+                "last_name": last_name.strip(),
+                "status": "active",
+                "preferred_languages": languages or []
             })
+            if email:
+                update_data["email"] = email.strip().lower()
 
         if role == "vendor":
+            if isinstance(first_name, str):
+                update_data["first_name"] = first_name.strip()
+            if isinstance(last_name, str):
+                update_data["last_name"] = last_name.strip()
             if business_category_ids:
                 await validate_business_categories(business_category_ids)
-            if business_name is not None:
+            if isinstance(business_name, str):
                 update_data["business_name"] = business_name.strip()
-            if owner_name is not None:
-                update_data["owner_name"] = owner_name.strip()
-            if city is not None:
+            if isinstance(city, str):
                 update_data["city"] = city.strip()
-            if province is not None:
+            if isinstance(province, str):
                 update_data["province"] = province.strip()
             if location is not None:
                 update_data["location"] = location
-            if address is not None:
+            if isinstance(address, str):
                 update_data["address"] = address.strip()
             if business_category_ids is not None:
                 update_data["business_category_ids"] = business_category_ids
+            if isinstance(visibility, str):
+                update_data["visibility"] = visibility
+            if isinstance(vendor_type, str):
+                update_data["vendor_type"] = vendor_type
+            update_data["preferred_languages"] = languages or []
 
         updated_count = await update_one(collection, {"_id": ObjectId(user_id)}, update_data)
         if not updated_count:
             raise HTTPException(status_code=500, detail="Failed to update profile")
 
         updated_user = await find_one(collection, {"_id": ObjectId(user_id)})
-
         status = updated_user.get("status")
+
         if role == "vendor":
-            required_fields = [
-                "business_name", "owner_name", "city", "province",
-                "location", "address", "business_category_ids"
-            ]
+            required_fields = ["business_name", "city", "province", "location", "address", "business_category_ids"]
             if all(updated_user.get(field) for field in required_fields) and status == "incomplete":
                 await update_one(collection, {"_id": ObjectId(user_id)}, {"status": "pending"})
                 status = "pending"
@@ -118,25 +136,20 @@ async def complete_profile_service(
         await delete(temp_key, redis)
         session_id = str(uuid4())
 
-        user_profile = {
-            "first_name": str(updated_user.get("first_name") or updated_user.get("owner_name")) if (updated_user.get("first_name") or updated_user.get("owner_name")) else None,
-            "last_name": str(updated_user.get("last_name")) if updated_user.get("last_name") else None,
-            "email": str(updated_user.get("email")) if updated_user.get("email") else None,
-            "phone": str(updated_user.get("phone")) if updated_user.get("phone") else None,
-            "business_name": str(updated_user.get("business_name")) if updated_user.get("business_name") else None,
-            "location": updated_user.get("location"),
-            "address": str(updated_user.get("address")) if updated_user.get("address") else None,
-            "status": status,
-            "business_category_ids": updated_user.get("business_category_ids", []),
-            "profile_picture": str(updated_user.get("profile_picture")) if updated_user.get("profile_picture") else None
-        }
+        if role == "vendor":
+            updated_user = normalize_vendor_data(updated_user)
+
+        profile_model = UserJWTProfile if role == "user" else VendorJWTProfile
+        profile_data = profile_model(**updated_user).model_dump()
 
         access_token = await generate_access_token(
             user_id=user_id,
             role=role,
             session_id=session_id,
-            user_profile=user_profile,
+            user_profile=profile_data if role == "user" else None,
+            vendor_profile=profile_data if role == "vendor" else None,
             language=language,
+            vendor_id=user_id if role == "vendor" else None
         )
 
         result = {

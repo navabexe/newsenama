@@ -1,7 +1,8 @@
-from pydantic.v1 import BaseModel, Field, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional
 from datetime import datetime, UTC
 from enum import Enum
+
 
 class UserStatus(str, Enum):
     PENDING = "pending"
@@ -9,11 +10,13 @@ class UserStatus(str, Enum):
     INACTIVE = "inactive"
     BLOCKED = "blocked"
 
+
 class Gender(str, Enum):
     MALE = "male"
     FEMALE = "female"
     OTHER = "other"
     UNDISCLOSED = "undisclosed"
+
 
 class User(BaseModel):
     id: Optional[str] = None
@@ -22,8 +25,10 @@ class User(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     password: Optional[str] = None  # hashed password
+
     roles: List[str] = Field(default_factory=lambda: ["user"])
-    status: UserStatus = Field(default=UserStatus.PENDING)
+    status: UserStatus = UserStatus.PENDING
+
     bio: Optional[str] = None
     avatar_urls: List[str] = Field(default_factory=list)
     additional_phones: List[str] = Field(default_factory=list)

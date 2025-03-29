@@ -1,6 +1,7 @@
-from pydantic.v1 import BaseModel, Field
+from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime, UTC
+
 
 class OTP(BaseModel):
     phone: str

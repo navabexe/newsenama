@@ -1,4 +1,4 @@
-# request_otp_service.py - نسخه نهایی با rate limit و token امن
+# 📄 File: request_otp_service.py
 
 import os
 from datetime import datetime, timezone
@@ -9,8 +9,9 @@ from redis.asyncio import Redis
 
 from common.logging.logger import log_info, log_error
 from common.translations.messages import get_message
-from common.security.jwt.tokens import generate_temp_token
 from common.utils.token_utils import generate_otp_code
+from common.security.jwt.payload_builder import build_jwt_payload
+from common.config.settings import settings
 from infrastructure.database.redis.operations.expire import expire
 from infrastructure.database.redis.operations.get import get
 from infrastructure.database.redis.operations.incr import incr
@@ -54,11 +55,24 @@ async def request_otp_service(
 
         otp_code = generate_otp_code()
         jti = str(uuid4())
-        temp_token = await generate_temp_token(phone=phone, role=role, jti=jti, redis=redis, language=language)
 
-        otp_ttl = 300  # 5 min
-        await setex(redis_key, otp_ttl, otp_code, redis)
-        await setex(f"temp_token:{jti}", otp_ttl, phone, redis)
+        # ✅ Generate temp token using payload builder
+        payload = build_jwt_payload(
+            token_type="temp",
+            role=role,
+            subject_id=phone,
+            phone=phone,
+            language=language,
+            status="incomplete",
+            phone_verified=False,
+            jti=jti,
+            expires_in=300  # 5 minutes
+        )
+        from jose import jwt
+        temp_token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+        await setex(redis_key, 300, otp_code, redis)
+        await setex(f"temp_token:{jti}", 300, phone, redis)
 
         for key, ttl in [(rate_limit_1min, 60), (rate_limit_10min, 600), (rate_limit_1h, 3600)]:
             await incr(key, redis)
@@ -80,7 +94,7 @@ async def request_otp_service(
         return {
             "temporary_token": temp_token,
             "message": get_message("otp.sent", language),
-            "expires_in": otp_ttl
+            "expires_in": 300
         }
 
     except HTTPException:

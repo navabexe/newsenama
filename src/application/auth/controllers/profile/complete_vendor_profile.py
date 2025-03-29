@@ -8,7 +8,6 @@ from infrastructure.database.redis.redis_client import get_redis_client
 
 router = APIRouter()
 
-
 @router.post("/complete-vendor-profile", status_code=status.HTTP_200_OK)
 async def complete_vendor_profile(
     data: CompleteVendorProfile,
@@ -19,14 +18,18 @@ async def complete_vendor_profile(
         return await complete_profile_service(
             temporary_token=data.temporary_token,
             business_name=data.business_name,
-            owner_name=data.owner_name,
+            first_name=data.first_name,
+            last_name=data.last_name,
             city=data.city,
             province=data.province,
             location=data.location.model_dump() if data.location else None,
             address=data.address,
             business_category_ids=data.business_category_ids,
+            visibility=data.visibility,
+            vendor_type=data.vendor_type,
+            languages=data.languages,
             client_ip=request.client.host,
-            language=data.language,
+            language=data.preferred_locale,
             redis=redis
         )
     except HTTPException:
@@ -34,5 +37,5 @@ async def complete_vendor_profile(
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=get_message("server.error", data.language)
+            detail=get_message("server.error", data.preferred_locale)
         )

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request, HTTPException, status, Depends
 from pydantic import EmailStr, Field
+from typing import List, Optional
 from redis.asyncio import Redis
 
 from common.schemas.request_base import BaseRequestModel
@@ -14,7 +15,13 @@ class CompleteUserProfile(BaseRequestModel):
     temporary_token: str = Field(..., description="Temporary token from verify-otp")
     first_name: str = Field(..., min_length=2, description="User's first name")
     last_name: str = Field(..., min_length=2, description="User's last name")
-    email: EmailStr = Field(..., description="User's email address")
+    email: Optional[EmailStr] = Field(default=None, description="User's email address")
+    preferred_languages: Optional[List[str]] = Field(default_factory=list)
+
+    model_config = {
+        "str_strip_whitespace": True,
+        "extra": "forbid"
+    }
 
 
 @router.post("/complete-user-profile", status_code=status.HTTP_200_OK)
@@ -29,8 +36,9 @@ async def complete_user_profile(
             first_name=data.first_name,
             last_name=data.last_name,
             email=data.email,
+            languages=data.preferred_languages,
             client_ip=request.client.host,
-            language=data.language,
+            language=data.language,  # زبان رابط کاربری / پیام‌ها
             redis=redis
         )
     except HTTPException:

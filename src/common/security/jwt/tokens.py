@@ -1,9 +1,8 @@
-# File: common/security/jwt/tokens.py
+# common/security/jwt/tokens.py
 
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from jose import jwt
-from redis.asyncio import Redis
 
 from common.config.settings import settings
 
@@ -16,58 +15,79 @@ TEMP_TOKEN_EXPIRE_MINUTES = settings.TEMP_TOKEN_EXPIRE_MINUTES
 
 
 def new_jti() -> str:
-    """Generate a new unique JWT ID"""
     return str(uuid4())
 
 
 def timestamp(minutes: int = 0, days: int = 0) -> tuple[int, int]:
-    """Return (iat, exp) timestamps"""
     iat = int(datetime.now(timezone.utc).timestamp())
     exp = int((datetime.now(timezone.utc) + timedelta(minutes=minutes, days=days)).timestamp())
     return iat, exp
 
 
+from common.security.jwt.payload_builder import build_jwt_payload
+
+# ...
+
 async def generate_access_token(
     user_id: str,
     role: str,
     session_id: str,
-    scopes: list[str] = None,
     user_profile: dict = None,
+    vendor_profile: dict = None,
+    scopes: list = None,
     language: str = "fa",
+    vendor_id: str = None,
 ) -> str:
     """
     Generate a structured access token with user identity payload.
     """
-    scopes = scopes or ["read"]
-    user_profile = user_profile or {}
-    iat, exp = timestamp(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    base_profile = user_profile if role == "user" else vendor_profile
 
-    payload = {
-        "iss": "senama-auth",
-        "aud": ["api", "vendor-panel"],
-        "sub": str(user_id),
-        "jti": session_id,
-        "session_id": session_id,
-        "role": role,
-        "token_type": "access",
-        "status": user_profile.get("status", "active"),
-        "scopes": scopes,
-        "language": language,
-        "amr": ["otp"],
-        "user": {
-            "first_name": user_profile.get("first_name"),
-            "last_name": user_profile.get("last_name"),
-            "email": user_profile.get("email"),
-            "phone": user_profile.get("phone"),
-            "business_name": user_profile.get("business_name"),
-            "location": user_profile.get("location"),
-            "address": user_profile.get("address"),
-            "profile_picture": user_profile.get("profile_picture"),
-            "business_category_ids": user_profile.get("business_category_ids", [])
-        },
-        "iat": iat,
-        "exp": exp
-    }
+    status = base_profile.get("status") if base_profile else None
+    phone = base_profile.get("phone") if base_profile else None
+
+    payload = build_jwt_payload(
+        token_type="access",
+        role=role,
+        subject_id=user_id,
+        session_id=session_id,
+        scopes=scopes or ["read"],
+        language=language,
+        status=status,
+        phone=phone,
+        user_data=user_profile if role == "user" else None,
+        vendor_data=vendor_profile if role == "vendor" else None,
+        vendor_id=vendor_id,
+        amr=["otp"],
+    )
+
+    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=ALGORITHM)
+
+
+
+
+async def generate_temp_token(
+    phone: str,
+    role: str,
+    jti: str,
+    status: str = "incomplete",
+    phone_verified: bool = False,
+    language: str = "fa",
+) -> str:
+    """
+    Generate temporary token for OTP verification steps (login/signup).
+    """
+    payload = build_jwt_payload(
+        token_type="temp",
+        role=role,
+        subject_id=phone,
+        phone=phone,
+        jti=jti,
+        language=language,
+        status=status,
+        phone_verified=phone_verified,
+        expires_in=TEMP_TOKEN_EXPIRE_MINUTES * 60,
+    )
 
     return jwt.encode(payload, JWT_SECRET_KEY, algorithm=ALGORITHM)
 
@@ -78,52 +98,15 @@ async def generate_refresh_token(
     session_id: str,
 ) -> str:
     """
-    Generate refresh token with minimal payload, stored in Redis.
+    Generate refresh token with minimal payload.
     """
-    iat, exp = timestamp(days=REFRESH_TOKEN_EXPIRE_DAYS)
-    payload = {
-        "iss": "senama-auth",
-        "aud": ["auth-service"],
-        "sub": user_id,
-        "jti": session_id,
-        "session_id": session_id,
-        "role": role,
-        "token_type": "refresh",
-        "iat": iat,
-        "exp": exp
-    }
-
-    token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=ALGORITHM)
-
-
-    return token
-
-
-async def generate_temp_token(
-    phone: str,
-    role: str,
-    jti: str,
-    status: str = "incomplete",
-    phone_verified: bool = False,
-    language: str = "fa",
-    redis: Redis = None
-) -> str:
-    """
-    Generate temporary token for OTP verification steps (login/signup).
-    """
-    iat, exp = timestamp(minutes=TEMP_TOKEN_EXPIRE_MINUTES)
-    payload = {
-        "iss": "senama-auth",
-        "aud": ["auth-temp"],
-        "sub": phone,
-        "jti": jti,
-        "role": role,
-        "token_type": "temp",
-        "status": status,
-        "phone_verified": phone_verified,
-        "language": language,
-        "iat": iat,
-        "exp": exp
-    }
+    payload = build_jwt_payload(
+        token_type="refresh",
+        role=role,
+        subject_id=user_id,
+        session_id=session_id,
+        expires_in=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+    )
 
     return jwt.encode(payload, JWT_SECRET_KEY, algorithm=ALGORITHM)
+

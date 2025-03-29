@@ -12,6 +12,7 @@ from infrastructure.database.redis.operations.delete import delete
 from infrastructure.database.redis.operations.expire import expire
 from infrastructure.database.redis.operations.get import get
 from infrastructure.database.redis.operations.hset import hset
+from infrastructure.database.mongodb.mongo_client import find_one
 
 
 async def refresh_token_service(
@@ -20,18 +21,6 @@ async def refresh_token_service(
     language: str = "fa",
     redis: Redis = None
 ) -> dict:
-    """
-    Refresh access and refresh token by validating the existing refresh token.
-
-    Args:
-        refresh_token (str): The current refresh token.
-        client_ip (str): Client IP address.
-        language (str): Response language.
-        redis (Redis): Redis instance.
-
-    Returns:
-        dict: New access/refresh tokens with status and message.
-    """
     try:
         if redis is None:
             from infrastructure.database.redis.redis_client import get_redis_client
@@ -52,16 +41,25 @@ async def refresh_token_service(
         if not await get(redis_key, redis):
             raise HTTPException(status_code=401, detail=get_message("token.expired", language))
 
-        # Revoke old refresh token
+        #  Revoke old refresh token
         await delete(redis_key, redis)
         await revoke_token(old_jti, ttl=7 * 24 * 60 * 60, redis=redis)
 
-        # Generate new tokens
+        #  Load user or vendor profile
+        collection = "vendors" if role == "vendor" else "users"
+        user_data = await find_one(collection, {"_id": user_id})
+        if not user_data:
+            raise HTTPException(status_code=404, detail=get_message("user.not_found", language))
+
+        #  Generate new tokens
         access_token = await generate_access_token(
             user_id=user_id,
             role=role,
             session_id=session_id,
             scopes=scopes,
+            language=language,
+            user_profile=user_data if role == "user" else None,
+            vendor_profile=user_data if role == "vendor" else None,
         )
 
         new_refresh_token = await generate_refresh_token(
@@ -70,7 +68,7 @@ async def refresh_token_service(
             session_id=session_id,
         )
 
-        # Update session info
+        # ️ Update session info
         await hset(f"sessions:{user_id}:{session_id}", mapping={
             "ip": client_ip,
             "last_refreshed": datetime.now(timezone.utc).isoformat()

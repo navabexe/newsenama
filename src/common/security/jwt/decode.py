@@ -1,12 +1,14 @@
 from jose import jwt, ExpiredSignatureError, JWTError as JoseJWTError
 from fastapi import HTTPException
 from redis.asyncio import Redis
+from pydantic import ValidationError
 
 from common.config.settings import settings
 from common.logging.logger import log_error, log_info
 from infrastructure.database.redis.operations.get import get
 from .errors import JWTError
 from .revoke import revoke_all_user_tokens
+from domain.auth.entities.token_entity import TokenPayload
 
 AUDIENCE_MAP = {
     "access": "api",
@@ -37,6 +39,7 @@ async def decode_token(
         secret = settings.ACCESS_SECRET if token_type in ["access", "temp"] else settings.REFRESH_SECRET
         expected_aud = AUDIENCE_MAP.get(token_type)
 
+        #  Decode JWT
         payload = jwt.decode(
             token,
             secret,
@@ -44,6 +47,14 @@ async def decode_token(
             audience=expected_aud
         )
 
+        #  Validate token structure
+        try:
+            TokenPayload(**payload)
+        except ValidationError as ve:
+            log_error("Invalid JWT payload structure", extra={"errors": ve.errors()})
+            raise HTTPException(status_code=401, detail="Invalid token payload structure")
+
+        #  Check token type match
         actual_type = payload.get("token_type")
         if actual_type != token_type:
             log_error("Token type mismatch", extra={"expected": token_type, "actual": actual_type})
@@ -53,7 +64,7 @@ async def decode_token(
         if not jti:
             raise JWTError("Token missing jti")
 
-        # Check blacklist key safely
+        #  Blacklist check
         blacklist_key = f"blacklist:{jti}"
         key_type = await redis.type(blacklist_key)
         if key_type != b'string' and key_type != b'none':
@@ -63,7 +74,7 @@ async def decode_token(
             log_error("Token revoked", extra={"jti": jti, "type": token_type})
             raise HTTPException(status_code=401, detail="Token revoked")
 
-        # Refresh token reuse detection
+        #  Refresh token reuse detection
         if token_type == "refresh":
             user_id = payload.get("sub")
             redis_key = f"refresh_tokens:{user_id}:{jti}"
