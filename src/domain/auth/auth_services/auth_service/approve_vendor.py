@@ -158,7 +158,7 @@ async def approve_vendor_service(
                 "refresh_token": refresh_token
             })
 
-        log_info(f"Vendor {action}ed", extra={
+        log_info("Vendor status updated", extra={
             "vendor_id": vendor_id,
             "new_status": new_status,
             "admin_id": current_user.get("user_id"),

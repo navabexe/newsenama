@@ -1,5 +1,4 @@
-# logout_service.py - نسخه نهایی اصلاح‌شده
-
+# File: domain/auth/auth_services/auth_service/logout.py
 from datetime import datetime, timezone
 from fastapi import HTTPException, status
 from redis.asyncio import Redis
@@ -12,7 +11,6 @@ from infrastructure.database.redis.operations.hgetall import hgetall
 from infrastructure.database.redis.operations.keys import keys
 from infrastructure.database.redis.redis_client import get_redis_client
 
-
 async def logout_service(
     user_id: str,
     session_id: str,
@@ -20,6 +18,19 @@ async def logout_service(
     redis: Redis = None,
     language: str = "fa"
 ) -> dict:
+    """
+    Logout user from all sessions and revoke all refresh tokens.
+
+    Args:
+        user_id (str): User ID.
+        session_id (str): Current session ID (for logging).
+        client_ip (str): Client IP address.
+        redis (Redis): Redis client instance.
+        language (str): Language for response messages.
+
+    Returns:
+        dict: Logout result with revoked counts.
+    """
     try:
         if redis is None:
             redis = await get_redis_client()
@@ -30,7 +41,7 @@ async def logout_service(
         session_keys = await keys(f"sessions:{user_id}:*", redis=redis)
         for key in session_keys:
             key_type = await redis.type(key)
-            if key_type != b'hash':
+            if key_type != b"hash":
                 continue
 
             session_data = await hgetall(key, redis=redis)
@@ -40,6 +51,7 @@ async def logout_service(
             jti = session_data.get("jti") if isinstance(session_data, dict) else None
             if jti:
                 await revoke_token(jti, ttl=900, redis=redis)
+                log_info("Session token revoked", extra={"jti": jti, "user_id": user_id})
 
         refresh_keys = await keys(f"refresh_tokens:{user_id}:*", redis=redis)
         for rkey in refresh_keys:
@@ -47,6 +59,7 @@ async def logout_service(
             jti = rkey.split(":")[-1]
             if jti:
                 await revoke_token(jti, ttl=86400, redis=redis)
+                log_info("Refresh token revoked", extra={"jti": jti, "user_id": user_id})
             revoked_refresh_tokens += 1
 
         log_info("User fully logged out", extra={
