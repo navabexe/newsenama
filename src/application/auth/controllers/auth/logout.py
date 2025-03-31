@@ -52,6 +52,7 @@ async def logout(
             )
             return result
 
+        # فقط سشن فعلی رو پاک کن
         session_key = f"sessions:{user_id}:{session_id}"
         refresh_key = f"refresh_tokens:{user_id}:{session_id}"
 
@@ -65,6 +66,9 @@ async def logout(
             "refresh_deleted": refresh_deleted,
             "ip": request.client.host
         })
+
+        if session_deleted == 0:
+            log_error("Session not found for logout", extra={"user_id": user_id, "session_id": session_id})
 
         return {
             "message": get_message("auth.logout.single", language)
