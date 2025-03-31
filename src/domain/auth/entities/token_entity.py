@@ -1,54 +1,65 @@
+# File: domain/auth/entities/token_entity.py
 from pydantic import BaseModel, Field
 from typing import Optional, List
 
 
 class UserJWTProfile(BaseModel):
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    bio: Optional[str] = None
-    avatar_urls: Optional[List[str]] = []
-    additional_phones: Optional[List[str]] = []
-    birthdate: Optional[str] = None
-    gender: Optional[str] = None
-    preferred_languages: Optional[List[str]] = []
-    status: Optional[str] = None
+    """Profile data embedded in JWT for users."""
+
+    first_name: Optional[str] = Field(default=None, max_length=50)
+    last_name: Optional[str] = Field(default=None, max_length=50)
+    email: Optional[str] = Field(default=None)
+    phone: Optional[str] = Field(default=None)
+    bio: Optional[str] = Field(default=None, max_length=500)
+    avatar_urls: List[str] = Field(default_factory=list)
+    additional_phones: List[str] = Field(default_factory=list)
+    birthdate: Optional[str] = Field(default=None, description="ISO format date string")
+    gender: Optional[str] = Field(default=None)
+    preferred_languages: List[str] = Field(default_factory=list, description="List of preferred languages")
+    status: Optional[str] = Field(default=None)
 
 
 class VendorJWTProfile(BaseModel):
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    phone: Optional[str] = None
-    address: Optional[str] = None
-    location: Optional[dict] = None
-    city: Optional[str] = None
-    province: Optional[str] = None
-    logo_urls: Optional[List[str]] = []
-    banner_urls: Optional[List[str]] = []
-    visibility: Optional[str] = None
-    status: Optional[str] = None
-    business_category_ids: Optional[List[str]] = []
-    preferred_languages: Optional[List[str]] = []
-    vendor_type: Optional[str] = None
-    account_types: Optional[List[str]] = []
-    show_followers_publicly: Optional[bool] = True
-    profile_picture: Optional[str] = None
+    """Profile data embedded in JWT for vendors."""
+
+    first_name: Optional[str] = Field(default=None, max_length=50)
+    last_name: Optional[str] = Field(default=None, max_length=50)
+    phone: Optional[str] = Field(default=None)
+    address: Optional[str] = Field(default=None, max_length=200)
+    location: Optional[dict] = Field(default=None)
+    city: Optional[str] = Field(default=None, max_length=50)
+    province: Optional[str] = Field(default=None, max_length=50)
+    logo_urls: List[str] = Field(default_factory=list)
+    banner_urls: List[str] = Field(default_factory=list)
+    visibility: Optional[str] = Field(default=None)
+    status: Optional[str] = Field(default=None)
+    business_category_ids: List[str] = Field(default_factory=list)
+    preferred_languages: List[str] = Field(default_factory=list, description="List of preferred languages")
+    vendor_type: Optional[str] = Field(default=None)
+    account_types: List[str] = Field(default_factory=list)
+    show_followers_publicly: bool = Field(default=True)
+    profile_picture: Optional[str] = Field(default=None)
 
 
 class TokenPayload(BaseModel):
-    sub: str
-    role: str
-    scopes: List[str] = Field(default_factory=list)
-    status: Optional[str] = None
-    vendor_id: Optional[str] = None
-    active_role: Optional[str] = None
-    phone_verified: Optional[bool] = None
-    account_verified: Optional[bool] = None
-    jti: Optional[str] = None
-    iat: Optional[int] = None
-    exp: int
-    session_id: Optional[str] = None
-    preferred_locale: Optional[str] = None
-    user_profile: Optional[UserJWTProfile] = None
-    vendor_profile: Optional[VendorJWTProfile] = None
+    """JWT token payload structure."""
+
+    sub: str = Field(..., description="Subject identifier (user ID or phone)")
+    role: str = Field(..., description="User role (e.g., user, vendor, admin)")
+    scopes: List[str] = Field(default_factory=list, description="Access scopes")
+    status: Optional[str] = Field(default=None, description="Account status")
+    vendor_id: Optional[str] = Field(default=None, description="Vendor identifier")
+    active_role: Optional[str] = Field(default=None, description="Currently active role")
+    phone_verified: Optional[bool] = Field(default=None, description="Phone verification status")
+    account_verified: Optional[bool] = Field(default=None, description="Account verification status")
+    jti: str = Field(..., description="JWT identifier")
+    iat: Optional[int] = Field(default=None, description="Issued-at timestamp")
+    exp: int = Field(..., description="Expiration timestamp")
+    session_id: Optional[str] = Field(default=None, description="Session identifier")
+    preferred_language: Optional[str] = Field(default="fa", description="Preferred language from profile")
+    user_profile: Optional[UserJWTProfile] = Field(default=None)
+    vendor_profile: Optional[VendorJWTProfile] = Field(default=None)
+
+    class Config:
+        """Pydantic configuration for the TokenPayload model."""
+        validate_by_name = True

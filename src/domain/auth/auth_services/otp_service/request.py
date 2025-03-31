@@ -1,5 +1,4 @@
-# 📄 File: request_otp_service.py
-
+# File: domain/auth/auth_services/otp_service/request.py
 import os
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -20,7 +19,6 @@ from infrastructure.database.redis.redis_client import get_redis_client
 
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 
-
 async def request_otp_service(
     phone: str,
     role: str,
@@ -29,6 +27,23 @@ async def request_otp_service(
     language: str = "fa",
     redis: Redis = None
 ) -> dict:
+    """
+    Request an OTP for a given phone number and role.
+
+    Args:
+        phone (str): Phone number in E164 format (e.g., +989123456789).
+        role (str): Role of the user ('user' or 'vendor').
+        purpose (str): Purpose of the OTP ('login' or 'signup').
+        client_ip (str): IP address of the client.
+        language (str): Language for response messages (e.g., 'fa', 'en').
+        redis (Redis): Redis client instance.
+
+    Returns:
+        dict: Response containing temporary token, message, and expiration time.
+
+    Raises:
+        HTTPException: On rate limit exceed or internal errors.
+    """
     try:
         if redis is None:
             redis = await get_redis_client()
@@ -56,7 +71,7 @@ async def request_otp_service(
         otp_code = generate_otp_code()
         jti = str(uuid4())
 
-        # ✅ Generate temp token using payload builder
+        # Generate temp token using payload builder
         payload = build_jwt_payload(
             token_type="temp",
             role=role,

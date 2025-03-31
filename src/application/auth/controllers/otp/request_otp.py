@@ -1,20 +1,23 @@
+# File: application/auth/controllers/otp/request_otp.py
 import phonenumbers
 from fastapi import APIRouter, Request, HTTPException, status, Depends
 from pydantic import Field, model_validator
-
 from redis.asyncio import Redis
+
 from common.schemas.request_base import BaseRequestModel
+from common.translations.messages import get_message
 from domain.auth.auth_services.otp_service.request import request_otp_service
 from infrastructure.database.redis.redis_client import get_redis_client
-from common.translations.messages import get_message
 
 router = APIRouter()
 
 
 class RequestOTP(BaseRequestModel):
+    """Request model for requesting an OTP."""
+
     phone: str = Field(..., description="Phone number (e.g., +989123456789)")
-    role: str = Field(..., pattern=r"^(user|vendor)$", description="user or vendor")
-    purpose: str = Field(..., pattern=r"^(login|signup)$", description="login or signup")
+    role: str = Field(..., pattern=r"^(user|vendor)$", description="User or vendor")
+    purpose: str = Field(..., pattern=r"^(login|signup)$", description="Login or signup")
 
     @model_validator(mode="after")
     def validate_phone(self) -> "RequestOTP":
@@ -35,17 +38,28 @@ class RequestOTP(BaseRequestModel):
 
 @router.post("/request-otp", status_code=status.HTTP_200_OK)
 async def request_otp(
-    data: RequestOTP,
-    request: Request,
-    redis: Redis = Depends(get_redis_client)
+        data: RequestOTP,
+        request: Request,
+        redis: Redis = Depends(get_redis_client)
 ):
+    """
+    Request an OTP for a given phone number.
+
+    Args:
+        data (RequestOTP): OTP request data.
+        request (Request): FastAPI request object.
+        redis (Redis): Redis client instance.
+
+    Returns:
+        dict: Response with temporary token and OTP status.
+    """
     try:
         return await request_otp_service(
             phone=data.phone,
             role=data.role,
             purpose=data.purpose,
             client_ip=request.client.host,
-            language=data.language,
+            language=data.response_language,
             redis=redis
         )
     except HTTPException:
@@ -55,5 +69,5 @@ async def request_otp(
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=get_message("server.error", data.language)
+            detail=get_message("server.error", data.response_language)
         )

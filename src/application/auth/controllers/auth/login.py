@@ -1,8 +1,10 @@
+# File: application/auth/controllers/login.py
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException, status, Depends
-from pydantic import BaseModel, Field
+from pydantic import Field
 from redis.asyncio import Redis
 
+from common.schemas.request_base import BaseRequestModel
 from common.translations.messages import get_message
 from domain.auth.auth_services.auth_service.login import login_service
 from infrastructure.database.redis.redis_client import get_redis_client
@@ -10,7 +12,9 @@ from infrastructure.database.redis.redis_client import get_redis_client
 router = APIRouter()
 
 
-class LoginRequest(BaseModel):
+class LoginRequest(BaseRequestModel):
+    """Request model for user, vendor, or admin login."""
+
     phone: Optional[str] = Field(
         default=None,
         min_length=10,
@@ -28,7 +32,6 @@ class LoginRequest(BaseModel):
         max_length=128,
         description="User/Admin/Vendor password"
     )
-    language: Optional[str] = Field(default="fa", description="Response language (fa/en)")
 
     model_config = {
         "str_strip_whitespace": True,
@@ -38,12 +41,20 @@ class LoginRequest(BaseModel):
 
 @router.post("/login", status_code=status.HTTP_200_OK)
 async def login(
-    data: LoginRequest,
-    request: Request,
-    redis: Redis = Depends(get_redis_client)
+        data: LoginRequest,
+        request: Request,
+        redis: Redis = Depends(get_redis_client)
 ):
     """
     Unified login endpoint for users, vendors, and admins.
+
+    Args:
+        data (LoginRequest): Login credentials.
+        request (Request): FastAPI request object.
+        redis (Redis): Redis client instance.
+
+    Returns:
+        dict: Response with tokens and role.
     """
     try:
         return await login_service(
@@ -51,7 +62,7 @@ async def login(
             username=data.username,
             password=data.password,
             client_ip=request.client.host,
-            language=data.language,
+            language=data.response_language,
             redis=redis
         )
     except HTTPException as e:
@@ -64,5 +75,5 @@ async def login(
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=get_message("server.error", data.language)
+            detail=get_message("server.error", data.response_language)
         )

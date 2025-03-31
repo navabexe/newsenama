@@ -1,4 +1,16 @@
-# File: common/security/jwt_handler.py
+"""
+JWT Handler Module
+
+This module aggregates all JWT-related functionality, including token generation,
+decoding, revocation, and authentication utilities. It serves as a central import
+point for JWT operations in the application.
+
+Key components:
+- Token generation: Access, refresh, and temporary tokens.
+- Token decoding and validation.
+- Token revocation management.
+- Authentication utilities for extracting user information.
+"""
 
 from common.security.jwt.tokens import (
     generate_temp_token,

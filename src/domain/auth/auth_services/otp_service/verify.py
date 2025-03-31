@@ -1,3 +1,4 @@
+# File: domain/auth/auth_services/otp_service/verify.py
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -18,15 +19,14 @@ from infrastructure.database.redis.operations.expire import expire
 from infrastructure.database.redis.redis_client import get_redis_client
 from infrastructure.database.redis.operations.scan import scan_keys
 
-
 async def delete_incomplete_sessions(user_id: str, redis: Redis):
+    """Delete all incomplete sessions for a user from Redis."""
     session_keys = await scan_keys(redis, f"sessions:{user_id}:*")
     for key in session_keys:
         session_data = await redis.hgetall(key)
         status = session_data.get(b"status")
         if status and status.decode() != "active":
             await redis.delete(key)
-
 
 async def verify_otp_service(
     otp: str,
@@ -35,6 +35,22 @@ async def verify_otp_service(
     language: str = "fa",
     redis: Redis = None
 ) -> dict:
+    """
+    Verify an OTP and issue appropriate tokens or instructions.
+
+    Args:
+        otp (str): 6-digit one-time password.
+        temporary_token (str): Temporary token from OTP request.
+        client_ip (str): Client IP address.
+        language (str): Language for response messages (e.g., 'fa', 'en').
+        redis (Redis): Redis client instance.
+
+    Returns:
+        dict: Response with tokens or next action instructions.
+
+    Raises:
+        HTTPException: On invalid OTP, token, or internal errors.
+    """
     try:
         redis = redis or await get_redis_client()
         payload = await decode_token(temporary_token, token_type="temp", redis=redis)
@@ -98,6 +114,9 @@ async def verify_otp_service(
             "status": user.get("status"),
         }
 
+        response_language = language
+        profile_language = profile_data["preferred_languages"][0] if profile_data["preferred_languages"] else language
+
         if status in ["incomplete", "pending"]:
             new_jti = str(uuid4())
             temp_payload = build_jwt_payload(
@@ -122,7 +141,7 @@ async def verify_otp_service(
                 "status": status,
                 "message": get_message(
                     "auth.profile.incomplete" if status == "incomplete" else "auth.profile.pending",
-                    profile_data["preferred_languages"][0] if profile_data["preferred_languages"] else language
+                    response_language
                 )
             }
 
@@ -154,16 +173,20 @@ async def verify_otp_service(
 
             session_key = f"sessions:{user_id}:{session_id}"
             key_type = await redis.type(session_key)
-            if key_type not in [b'hash', b'none']:
+            if key_type not in [b"hash", b"none"]:
                 await redis.delete(session_key)
 
-            await hset(session_key, mapping={
-                "ip": client_ip,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "device": "unknown",
-                "status": "active",
-                "jti": session_id
-            }, redis=redis)
+            await hset(
+                session_key,
+                mapping={
+                    "ip": client_ip,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "device": "unknown",
+                    "status": "active",
+                    "jti": session_id
+                },
+                redis=redis
+            )
             await expire(session_key, 86400, redis=redis)
 
             return {
@@ -171,10 +194,10 @@ async def verify_otp_service(
                 "refresh_token": refresh_token,
                 "next_action": None,
                 "status": "active",
-                "message": get_message("auth.login.success", profile_data["preferred_languages"][0] if profile_data["preferred_languages"] else language)
+                "message": get_message("auth.login.success", response_language)
             }
 
-        raise HTTPException(status_code=400, detail=get_message("server.error", language))
+        raise HTTPException(status_code=400, detail=get_message("server.error", response_language))
 
     except HTTPException:
         raise

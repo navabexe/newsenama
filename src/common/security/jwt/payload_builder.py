@@ -1,12 +1,20 @@
+# File: common/security/jwt/payload_builder.py
 from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Optional, List
 
-from domain.auth.entities.token_entity import (
-    UserJWTProfile,
-    VendorJWTProfile,
-)
+from common.config.settings import settings
+from domain.auth.entities.token_entity import UserJWTProfile, VendorJWTProfile
 
+ALLOWED_LANGUAGES = ["fa", "en", "ar"]
+
+def get_profile_language(role: str, user_data: Optional[dict], vendor_data: Optional[dict]) -> str:
+    """Extract the preferred language from user or vendor profile, defaulting to 'fa'."""
+    profile_data = user_data if role == "user" else vendor_data
+    if profile_data and "languages" in profile_data and profile_data["languages"]:
+        lang = profile_data["languages"][0]
+        return lang if lang in ALLOWED_LANGUAGES else "fa"
+    return "fa"
 
 def build_jwt_payload(
     *,
@@ -21,22 +29,18 @@ def build_jwt_payload(
     user_data: Optional[dict] = None,
     vendor_data: Optional[dict] = None,
     vendor_id: Optional[str] = None,
-    expires_in: int = 3600,
+    expires_in: int = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     issuer: str = "senama-auth",
     audience: Optional[List[str]] = None,
     amr: Optional[List[str]] = None,
     jti: Optional[str] = None,
     language: Optional[str] = "fa",
 ) -> dict:
+    """Build a standardized JWT payload with the provided claims."""
     now = int(datetime.now(timezone.utc).timestamp())
     exp = now + expires_in
 
-    # Determine effective language from profile
-    profile_lang = (
-        (user_data.get("languages")[0] if user_data and user_data.get("languages") else None)
-        if role == "user"
-        else (vendor_data.get("languages")[0] if vendor_data and vendor_data.get("languages") else None)
-    )
+    effective_language = get_profile_language(role, user_data, vendor_data) or language
 
     payload = {
         "iss": issuer,
@@ -47,27 +51,21 @@ def build_jwt_payload(
         "token_type": token_type,
         "iat": now,
         "exp": exp,
-        "language": profile_lang or language,
+        "language": effective_language,
     }
 
     if phone:
         payload["phone"] = phone
-
     if session_id:
         payload["session_id"] = session_id
-
     if status is not None:
         payload["status"] = status
-
     if phone_verified is not None:
         payload["phone_verified"] = phone_verified
-
     if scopes:
         payload["scopes"] = scopes
-
     if amr:
         payload["amr"] = amr
-
     if vendor_id:
         payload["vendor_id"] = vendor_id
 
@@ -79,10 +77,8 @@ def build_jwt_payload(
 
     return payload
 
-
 def default_audience(token_type: str, role: Optional[str] = None) -> List[str]:
+    """Return the default audience based on token type and role."""
     if token_type == "access":
-        if role == "vendor":
-            return ["api", "vendor-panel"]
-        return ["api"]
+        return ["api", "vendor-panel"] if role == "vendor" else ["api"]
     return ["auth-temp"]
