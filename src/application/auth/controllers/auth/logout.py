@@ -52,7 +52,6 @@ async def logout(
             )
             return result
 
-        # فقط سشن فعلی رو پاک کن
         session_key = f"sessions:{user_id}:{session_id}"
         refresh_key = f"refresh_tokens:{user_id}:{session_id}"
 

@@ -1,96 +1,110 @@
 from datetime import datetime, timezone
-
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from redis.asyncio import Redis
-
-from common.logging.logger import log_info, log_error
-from common.security.jwt.decode import decode_token as decode_refresh_token
-from common.security.jwt.revoke import revoke_token
-from common.security.jwt.tokens import generate_access_token, generate_refresh_token
+from common.security.jwt_handler import decode_token, generate_access_token, generate_refresh_token, revoke_token
 from common.translations.messages import get_message
+from common.logging.logger import log_info, log_error
 from infrastructure.database.redis.operations.delete import delete
-from infrastructure.database.redis.operations.expire import expire
 from infrastructure.database.redis.operations.get import get
 from infrastructure.database.redis.operations.hset import hset
-from infrastructure.database.mongodb.mongo_client import find_one
+from infrastructure.database.redis.operations.expire import expire
+from infrastructure.database.mongodb.repository import MongoRepository
+from common.config.settings import settings
 
 
-async def refresh_token_service(
+async def refresh_tokens(
+    request: Request,
     refresh_token: str,
-    client_ip: str,
-    language: str = "fa",
-    redis: Redis = None
-) -> dict:
-    try:
-        if redis is None:
-            from infrastructure.database.redis.redis_client import get_redis_client
-            redis = await get_redis_client()
+    redis: Redis,
+    users_repo: MongoRepository,
+    vendors_repo: MongoRepository,
+    language: str = "fa"
+):
+    client_ip = request.client.host
 
-        payload = await decode_refresh_token(refresh_token, token_type="refresh", redis=redis)
+    payload = await decode_token(token=refresh_token, token_type="refresh", redis=redis)
 
-        user_id = payload.get("sub")
-        role = payload.get("role")
-        old_jti = payload.get("jti")
-        session_id = payload.get("session_id")
-        scopes = payload.get("scopes", [])
+    user_id = payload.get("sub")
+    role = payload.get("role")
+    old_jti = payload.get("jti")
+    session_id = payload.get("session_id")
+    scopes = payload.get("scopes", [])
+    language = language or payload.get("language", "fa")
 
-        if not all([user_id, role, old_jti, session_id]):
-            raise HTTPException(status_code=400, detail=get_message("token.invalid", language))
+    if not all([user_id, role, old_jti, session_id]):
+        log_error("Malformed refresh token", extra={"payload": payload, "ip": client_ip})
+        raise HTTPException(status_code=400, detail=get_message("token.invalid", language))
 
-        redis_key = f"refresh_tokens:{user_id}:{old_jti}"
-        if not await get(redis_key, redis):
-            raise HTTPException(status_code=401, detail=get_message("token.expired", language))
+    redis_key = f"refresh_tokens:{user_id}:{old_jti}"
+    redis_value = await get(redis_key, redis=redis)
+    if not redis_value:
+        log_error("Refresh token not found or reused", extra={"user_id": user_id, "jti": old_jti, "ip": client_ip})
+        raise HTTPException(status_code=401, detail=get_message("token.expired", language))
 
-        #  Revoke old refresh token
-        await delete(redis_key, redis)
-        await revoke_token(old_jti, ttl=7 * 24 * 60 * 60, redis=redis)
+    # Revoke old token
+    await delete(redis_key, redis=redis)
+    await revoke_token(old_jti, ttl=7 * 24 * 60 * 60, redis=redis)
 
-        #  Load user or vendor profile
-        collection = "vendors" if role == "vendor" else "users"
-        user_data = await find_one(collection, {"_id": user_id})
-        if not user_data:
-            raise HTTPException(status_code=404, detail=get_message("user.not_found", language))
+    # Get user info
+    status = None
+    phone_verified = None
+    user_profile = None
+    vendor_profile = None
 
-        #  Generate new tokens
-        access_token = await generate_access_token(
-            user_id=user_id,
-            role=role,
-            session_id=session_id,
-            scopes=scopes,
-            language=language,
-            user_profile=user_data if role == "user" else None,
-            vendor_profile=user_data if role == "vendor" else None,
-        )
+    if role == "vendor":
+        vendor = await vendors_repo.find_one({"_id": user_id})
+        if vendor:
+            status = vendor.get("status")
+            phone_verified = vendor.get("phone_verified", False)
+            vendor_profile = vendor
+    elif role == "user":
+        user = await users_repo.find_one({"_id": user_id})
+        if user:
+            status = user.get("status")
+            phone_verified = user.get("phone_verified", False)
+            user_profile = user
 
-        new_refresh_token = await generate_refresh_token(
-            user_id=user_id,
-            role=role,
-            session_id=session_id,
-        )
+    # Generate new tokens
+    access_token = await generate_access_token(
+        user_id=user_id,
+        role=role,
+        session_id=session_id,
+        scopes=scopes,
+        status=status,
+        phone_verified=phone_verified,
+        user_profile=user_profile,
+        vendor_profile=vendor_profile,
+        language=language
+    )
 
-        # ️ Update session info
-        await hset(f"sessions:{user_id}:{session_id}", mapping={
-            "ip": client_ip,
-            "last_refreshed": datetime.now(timezone.utc).isoformat()
-        }, redis=redis)
-        await expire(f"sessions:{user_id}:{session_id}", 86400, redis=redis)
+    refresh_token, new_jti = await generate_refresh_token(
+        user_id=user_id,
+        role=role,
+        session_id=session_id,
+        status=status,
+        language=language,
+        return_jti=True  # تغییر تابع generate_refresh_token لازم است
+    )
 
-        log_info("Tokens refreshed via service", extra={
-            "user_id": user_id,
-            "role": role,
-            "session_id": session_id,
-            "ip": client_ip
-        })
+    # Save new refresh token in Redis
+    refresh_key = f"refresh_tokens:{user_id}:{new_jti}"
+    await redis.setex(refresh_key, settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60, "active")
+    log_info("Stored new refresh token in Redis", extra={"key": refresh_key})
 
-        return {
-            "access_token": access_token,
-            "refresh_token": new_refresh_token,
-            "message": get_message("token.refreshed", language),
-            "status": "refreshed"
-        }
+    # Update session info
+    session_key = f"sessions:{user_id}:{session_id}"
+    session_data = {
+        "ip": client_ip,
+        "last_refreshed": datetime.now(timezone.utc).isoformat()
+    }
+    await hset(session_key, mapping=session_data, redis=redis)
+    await expire(session_key, 86400, redis=redis)
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        log_error("Refresh token service failed", extra={"error": str(e), "ip": client_ip}, exc_info=True)
-        raise HTTPException(status_code=500, detail=get_message("server.error", language))
+    log_info("Tokens refreshed successfully", extra={"user_id": user_id, "session_id": session_id, "role": role, "ip": client_ip})
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "message": get_message("token.refreshed", language),
+        "status": "refreshed"
+    }

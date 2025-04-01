@@ -121,13 +121,13 @@ MESSAGES = {
         "fa": "نوع سشن نامعتبر است",
         "en": "Invalid session type"
     },
-    "server.error": {
-        "fa": "خطای داخلی سرور.",
-        "en": "Internal server error."
-    },
     "account.deletion.requested": {
         "fa": "درخواست حذف حساب شما ثبت شد. تیم پشتیبانی به زودی بررسی خواهد کرد.",
         "en": "Your account deletion request has been submitted. Support will review it soon."
+    },
+    "server.error": {
+        "fa": "خطای سرور رخ داد",
+        "en": "Server error occurred"
     }
 }
 
