@@ -1,98 +1,89 @@
-from fastapi import APIRouter, Request, HTTPException, status, Depends
-from redis.asyncio import Redis
-from pydantic import Field, model_validator, ConfigDict
+# File: src/application/auth/otp/verify_otp.py
+
+from fastapi import APIRouter, Request, status, Depends, HTTPException
+from pydantic import Field
 from typing import Annotated
+from redis.asyncio import Redis
+
 from common.schemas.request_base import BaseRequestModel
-from common.schemas.standard_response import StandardResponse
+from common.schemas.standard_response import StandardResponse, Meta
 from common.translations.messages import get_message
-from domain.auth.auth_services.otp_service.verify import verify_otp_service
-from infrastructure.database.redis.redis_client import get_redis_client
 from common.logging.logger import log_info, log_error
+from common.exceptions.base_exception import (
+    BadRequestException,
+    InternalServerErrorException,
+    UnauthorizedException
+)
+from common.utils.ip_utils import extract_client_ip
+
+from infrastructure.database.redis.redis_client import get_redis_client
+from domain.auth.auth_services.otp_service.verify_otp_service import verify_otp_service
 
 router = APIRouter()
 
-class VerifyOTP(BaseRequestModel):
-    """Request model for verifying an OTP."""
-    otp: Annotated[str, Field(
-        min_length=6,
-        max_length=6,
-        pattern=r"^\d{6}$",
-        description="6-digit one-time password",
-        examples=["123456"]
-    )]
-    temporary_token: Annotated[str, Field(
-        min_length=1,
-        description="Temporary token from request-otp",
-        examples=["eyJhbGciOi..."]
-    )]
 
-    model_config = ConfigDict(
-        str_strip_whitespace=True,
-        extra="forbid"
-    )
+class VerifyOTPModel(BaseRequestModel):
+    otp: Annotated[str, Field(min_length=4, max_length=10, description="One-time password")]
+    temporary_token: Annotated[str, Field(description="Temporary token issued with OTP")]
 
-    @model_validator(mode="after")
-    def validate_otp_format(self) -> "VerifyOTP":
-        if not self.otp.isdigit():
-            raise ValueError("OTP must be numeric")
-        return self
+    model_config = {
+        "str_strip_whitespace": True,
+        "extra": "allow",  # ← اجازه به request_id و client_version و response_language
+    }
+
 
 @router.post(
     "/verify-otp",
     status_code=status.HTTP_200_OK,
     response_model=StandardResponse,
-    summary="Verify OTP and return tokens or instructions for next step",
-    tags=["Authentication"],
-    responses={
-        200: {"description": "OTP verified successfully."},
-        400: {"description": "Invalid OTP or token."},
-        500: {"description": "Internal server error."}
-    }
+    summary="Verify OTP",
+    tags=["Authentication"]
 )
-async def verify_otp(
-    data: VerifyOTP,
+async def verify_otp_endpoint(
+    data: VerifyOTPModel,
     request: Request,
     redis: Annotated[Redis, Depends(get_redis_client)]
 ):
-    """
-    Verify OTP and return tokens or instructions for next step.
-    """
+    client_ip = extract_client_ip(request)
+    language = getattr(data, "response_language", "fa")
+
     try:
         result = await verify_otp_service(
             otp=data.otp,
             temporary_token=data.temporary_token,
-            client_ip=request.client.host,
-            language=data.response_language,
+            client_ip=client_ip,
+            language=language,
             redis=redis
         )
+
         log_info("OTP verified", extra={
-            "ip": request.client.host,
-            "token": data.temporary_token,
+            "phone": result.get("phone"),
+            "ip": client_ip,
             "endpoint": "/verify-otp"
         })
+
         return StandardResponse(
-            meta={
-                "message": get_message("otp.valid", data.response_language),
-                "status": "success",
-                "code": 200
-            },
-            data=result
+            meta=Meta(
+                message=result["message"],
+                status="success",
+                code=200
+            ),
+            data={key: val for key, val in result.items() if key != "message"}
         )
 
-    except HTTPException as e:
-        log_error("OTP HTTPException", extra={"detail": str(e.detail), "ip": request.client.host})
-        raise
-
-    except ValueError as e:
-        log_error("OTP validation error", extra={"error": str(e), "ip": request.client.host})
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=get_message("otp.invalid", data.response_language)
-        )
+    except HTTPException as http_exc:
+        # خطاهای JWT یا 400/401 که خود verify_otp_service انداخته
+        log_error("Handled error in /verify-otp", extra={
+            "error": str(http_exc.detail),
+            "ip": client_ip,
+            "endpoint": "/verify-otp"
+        })
+        raise http_exc
 
     except Exception as e:
-        log_error("Unexpected OTP error", extra={"error": str(e), "ip": request.client.host})
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=get_message("server.error", data.response_language)
-        )
+        log_error("Internal server error in /verify-otp", extra={
+            "error": str(e),
+            "ip": client_ip,
+            "endpoint": "/verify-otp"
+        }, exc_info=True)
+        raise InternalServerErrorException(detail=get_message("server.error", language))

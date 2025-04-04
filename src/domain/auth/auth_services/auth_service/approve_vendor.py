@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 from bson import ObjectId
-from fastapi import HTTPException, status
+from fastapi import HTTPException
 from redis.asyncio import Redis
 
 from common.logging.logger import log_info, log_error
@@ -21,25 +21,36 @@ from common.exceptions.base_exception import (
     UnauthorizedException
 )
 
+
 async def notify_vendor_of_status(vendor_id: str, phone: str, status: str, client_ip: str, language: str):
-    """Notify vendor about approval/rejection via SMS."""
+    """Notify vendor about approval/rejection via SMS and INAPP."""
     try:
         message_key = "vendor.approved" if status == "active" else "vendor.rejected"
-        notification = {
-            "receiver_type": "vendor",
-            "receiver_id": vendor_id,
-            "title": get_message("vendor.status_update.title", language),
-            "body": get_message(message_key, language),
-            "channel": "sms",
-            "reference_type": "vendor",
-            "reference_id": vendor_id,
-            "created_at": datetime.now(timezone.utc).isoformat()
-        }
-        await insert_one("notifications", notification)
+        title = get_message("vendor.status_update.title", language)
+        body = get_message(message_key, language)
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        for channel in ["inapp", "sms"]:
+            await insert_one("notifications", {
+                "receiver_type": "vendor",
+                "receiver_id": vendor_id,
+                "title": title,
+                "body": body,
+                "channel": channel,
+                "reference_type": "vendor",
+                "reference_id": vendor_id,
+                "status": "sent" if channel == "inapp" else "pending",
+                "sent_at": now if channel == "inapp" else None,
+                "created_at": now
+            })
+
         log_info("Vendor notified successfully", extra={"vendor_id": vendor_id, "status": status, "ip": client_ip})
+
     except Exception as e:
         log_error("Failed notifying vendor", extra={"vendor_id": vendor_id, "error": str(e)}, exc_info=True)
         raise InternalServerErrorException(detail=get_message("server.error", language))
+
 
 async def approve_vendor_service(
     current_user: dict,
@@ -87,7 +98,10 @@ async def approve_vendor_service(
 
         await notify_vendor_of_status(str(vendor["_id"]), vendor["phone"], new_status, client_ip, language)
 
-        result = {"status": new_status, "message": get_message(f"vendor.{action}ed", language)}
+        payload = {
+            "status": new_status,
+            "message": get_message(f"vendor.{action}ed", language)
+        }
 
         if action == "approve":
             session_id = str(uuid4())
@@ -124,10 +138,19 @@ async def approve_vendor_service(
             }, redis=redis)
             await expire(session_key, 86400, redis=redis)
 
-            result.update({"access_token": access_token, "refresh_token": refresh_token})
+            payload.update({"access_token": access_token})
+            if refresh_token:
+                payload["refresh_token"] = refresh_token
 
         log_info("Vendor approval action completed", extra={"vendor_id": vendor_id, "status": new_status})
-        return result
+        return {
+            "meta": {
+                "status": "success",
+                "code": 200,
+                "message": payload.pop("message")
+            },
+            "data": payload
+        }
 
     except HTTPException:
         raise
