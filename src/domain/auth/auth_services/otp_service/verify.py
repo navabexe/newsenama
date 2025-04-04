@@ -163,7 +163,7 @@ async def verify_otp_service(
             return {
                 "temporary_token": temp_token,
                 "refresh_token": None,
-                "next_action": "complete_profile" if status == "incomplete" else "await_admin_approval",
+                "next_action": None,  # حذف next_action وقتی که نیازی نیست
                 "status": status,
                 "message": get_message(
                     "auth.profile.incomplete" if status == "incomplete" else "auth.profile.pending",
@@ -188,7 +188,7 @@ async def verify_otp_service(
                 scopes=[],
                 user_data=profile_data if role == "user" else None,
                 vendor_data=profile_data if role == "vendor" else None,
-                expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # 1 ساعت
+                expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # 1 hour
             )
             log_info("Encoding access token", extra={"secret": settings.ACCESS_SECRET[:10] + "..."})
             access_token = jwt.encode(access_payload, settings.ACCESS_SECRET, algorithm=settings.ALGORITHM)
@@ -200,7 +200,7 @@ async def verify_otp_service(
                 subject_id=user_id,
                 session_id=session_id,
                 status="active",
-                expires_in=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,  # 30 روز
+                expires_in=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,  # 30 days
             )
             log_info("Encoding refresh token", extra={"secret": settings.REFRESH_SECRET[:10] + "..."})
             refresh_token = jwt.encode(refresh_payload, settings.REFRESH_SECRET, algorithm=settings.ALGORITHM)
@@ -237,9 +237,8 @@ async def verify_otp_service(
             return {
                 "access_token": access_token,
                 "refresh_token": refresh_token,
-                "next_action": None,
                 "status": "active",
-                "message": get_message("auth.login.success", response_language)
+                "message": "Welcome, you have successfully logged in."
             }
 
         raise HTTPException(status_code=400, detail=get_message("server.error", response_language))

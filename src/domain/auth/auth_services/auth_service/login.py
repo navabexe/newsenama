@@ -1,9 +1,7 @@
-# File: domain/auth/auth_services/auth_service/login.py
 from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Dict, Optional
 
-from fastapi import HTTPException, status
 from redis.asyncio import Redis
 
 from common.logging.logger import log_info, log_error
@@ -11,10 +9,22 @@ from common.security.jwt.tokens import generate_access_token, generate_refresh_t
 from common.security.password import verify_password
 from common.security.permissions_loader import get_scopes_for_role
 from common.translations.messages import get_message
+from common.exceptions.base_exception import (
+    BadRequestException,
+    UnauthorizedException,
+    ForbiddenException,
+    InternalServerErrorException,
+    TooManyRequestsException
+)
+
 from infrastructure.database.mongodb.mongo_client import find_one
 from infrastructure.database.redis.operations.hset import hset
 from infrastructure.database.redis.operations.expire import expire
 from infrastructure.database.redis.redis_client import get_redis_client
+
+MAX_ATTEMPTS = 5
+LOCKOUT_SECONDS = 600  # 10 minutes
+
 
 async def login_service(
     phone: Optional[str],
@@ -25,60 +35,57 @@ async def login_service(
     redis: Redis = None
 ) -> Dict:
     """
-    Handle login for users, vendors, or admins.
-
-    Args:
-        phone (Optional[str]): User's or vendor's phone number.
-        username (Optional[str]): Admin's username.
-        password (str): Password for authentication.
-        client_ip (str): Client IP address.
-        language (str): Language for response messages (e.g., 'fa', 'en').
-        redis (Redis): Redis client instance.
-
-    Returns:
-        dict: Response with tokens, role, and message.
-
-    Raises:
-        HTTPException: On invalid credentials, inactive account, or internal errors.
+    Authenticate user/vendor/admin and return access/refresh tokens.
+    Includes brute-force protection, logging, and scoped token generation.
     """
     try:
         if redis is None:
             redis = await get_redis_client()
 
         if not phone and not username:
-            raise HTTPException(status_code=400, detail=get_message("auth.login.missing_credentials", language))
+            raise BadRequestException(detail=get_message("auth.login.missing_credentials", language))
         if phone and username:
-            raise HTTPException(status_code=400, detail=get_message("auth.login.too_many_credentials", language))
+            raise BadRequestException(detail=get_message("auth.login.too_many_credentials", language))
+
+        identifier = (phone or username).strip().lower()
+        login_key = f"login:attempt:{client_ip}:{identifier}"
+        attempts = int(await redis.get(login_key) or 0)
+
+        if attempts >= MAX_ATTEMPTS:
+            raise TooManyRequestsException(detail=get_message("auth.login.too_many_attempts", language))
 
         phone = phone.strip() if phone else None
         username = username.strip().lower() if username else None
 
         user = None
         collection = None
+
         if phone:
-            user = await find_one("users", {"phone": phone})
-            collection = "users"
-            if not user:
-                user = await find_one("vendors", {"phone": phone})
-                collection = "vendors"
+            user = await find_one("users", {"phone": phone}) or await find_one("vendors", {"phone": phone})
+            collection = "vendors" if user and user.get("type") == "vendor" else "users"
         else:
             user = await find_one("admins", {"username": username})
             collection = "admins"
 
         if not user:
-            log_error("User not found", extra={"phone": phone, "username": username, "ip": client_ip})
-            raise HTTPException(status_code=401, detail=get_message("auth.login.invalid", language))
+            await redis.incr(login_key)
+            await redis.expire(login_key, LOCKOUT_SECONDS)
+            raise UnauthorizedException(detail=get_message("auth.login.invalid", language))
 
-        if "password" not in user or not user["password"]:
-            log_error("User has no password set", extra={"id": str(user['_id']), "ip": client_ip})
-            raise HTTPException(status_code=401, detail=get_message("auth.login.no_password", language))
+        if not user.get("password"):
+            await redis.incr(login_key)
+            await redis.expire(login_key, LOCKOUT_SECONDS)
+            raise UnauthorizedException(detail=get_message("auth.login.no_password", language))
 
         if not verify_password(password, user["password"]):
-            log_error("Invalid password", extra={"id": str(user['_id']), "ip": client_ip})
-            raise HTTPException(status_code=401, detail=get_message("auth.login.invalid", language))
+            await redis.incr(login_key)
+            await redis.expire(login_key, LOCKOUT_SECONDS)
+            raise UnauthorizedException(detail=get_message("auth.login.invalid", language))
 
         if user.get("status") != "active":
-            raise HTTPException(status_code=403, detail=get_message("auth.login.not_active", language))
+            raise ForbiddenException(detail=get_message("auth.login.not_active", language))
+
+        await redis.delete(login_key)  # Clear failed attempts
 
         user_id = str(user["_id"])
         role = user.get("role", "admin" if collection == "admins" else "vendor" if collection == "vendors" else "user")
@@ -86,16 +93,16 @@ async def login_service(
         scopes = get_scopes_for_role(role, user.get("status"))
 
         user_profile = {
-            "first_name": str(user.get("first_name")) if user.get("first_name") else None,
-            "last_name": str(user.get("last_name")) if user.get("last_name") else None,
-            "email": str(user.get("email")) if user.get("email") else None,
-            "phone": str(user.get("phone")) if user.get("phone") else None,
-            "business_name": str(user.get("business_name")) if user.get("business_name") else None,
+            "first_name": user.get("first_name"),
+            "last_name": user.get("last_name"),
+            "email": user.get("email"),
+            "phone": user.get("phone"),
+            "business_name": user.get("business_name"),
             "location": user.get("location"),
-            "address": str(user.get("address")) if user.get("address") else None,
+            "address": user.get("address"),
             "status": user.get("status"),
             "business_category_ids": user.get("business_category_ids", []),
-            "profile_picture": str(user.get("profile_picture")) if user.get("profile_picture") else None,
+            "profile_picture": user.get("profile_picture"),
             "preferred_languages": user.get("preferred_languages", [])
         }
 
@@ -116,7 +123,7 @@ async def login_service(
 
         session_key = f"sessions:{user_id}:{session_id}"
         key_type = await redis.type(session_key)
-        if key_type != b"hash" and key_type != b"none":
+        if key_type not in [b"hash", b"none"]:
             await redis.delete(session_key)
 
         await hset(
@@ -138,18 +145,18 @@ async def login_service(
             "user_id": user_id,
             "role": role,
             "session_id": session_id,
-            "ip": client_ip
+            "ip": client_ip,
+            "endpoint": "login_service"
         })
 
         return {
             "access_token": access_token,
             "refresh_token": refresh_token,
-            "role": role,
-            "message": get_message("auth.login.success", language) 
+            "token_type": "bearer",
+            "expires_in": 3600,
+            "role": role
         }
 
-    except HTTPException:
-        raise
     except Exception as e:
         log_error("Login service failed", extra={"error": str(e)}, exc_info=True)
-        raise HTTPException(status_code=500, detail=get_message("server.error", language))
+        raise InternalServerErrorException(detail=get_message("server.error", language))

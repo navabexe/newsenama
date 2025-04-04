@@ -1,11 +1,9 @@
-# File: application/auth/controllers/otp/verify_otp.py
-
 from fastapi import APIRouter, Request, HTTPException, status, Depends
 from redis.asyncio import Redis
 from pydantic import Field, model_validator, ConfigDict
 from typing import Annotated
-
 from common.schemas.request_base import BaseRequestModel
+from common.schemas.standard_response import StandardResponse
 from common.translations.messages import get_message
 from domain.auth.auth_services.otp_service.verify import verify_otp_service
 from infrastructure.database.redis.redis_client import get_redis_client
@@ -13,10 +11,8 @@ from common.logging.logger import log_info, log_error
 
 router = APIRouter()
 
-
 class VerifyOTP(BaseRequestModel):
     """Request model for verifying an OTP."""
-
     otp: Annotated[str, Field(
         min_length=6,
         max_length=6,
@@ -41,10 +37,12 @@ class VerifyOTP(BaseRequestModel):
             raise ValueError("OTP must be numeric")
         return self
 
-
 @router.post(
     "/verify-otp",
     status_code=status.HTTP_200_OK,
+    response_model=StandardResponse,
+    summary="Verify OTP and return tokens or instructions for next step",
+    tags=["Authentication"],
     responses={
         200: {"description": "OTP verified successfully."},
         400: {"description": "Invalid OTP or token."},
@@ -67,22 +65,33 @@ async def verify_otp(
             language=data.response_language,
             redis=redis
         )
-        log_info("OTP verified", extra={"ip": request.client.host, "token": data.temporary_token})
-        return result
+        log_info("OTP verified", extra={
+            "ip": request.client.host,
+            "token": data.temporary_token,
+            "endpoint": "/verify-otp"
+        })
+        return StandardResponse(
+            meta={
+                "message": get_message("otp.valid", data.response_language),
+                "status": "success",
+                "code": 200
+            },
+            data=result
+        )
 
     except HTTPException as e:
-        log_error("OTP HTTPException", extra={"detail": str(e.detail)})
+        log_error("OTP HTTPException", extra={"detail": str(e.detail), "ip": request.client.host})
         raise
 
     except ValueError as e:
-        log_error("OTP validation error", extra={"error": str(e)})
+        log_error("OTP validation error", extra={"error": str(e), "ip": request.client.host})
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=get_message("otp.invalid", data.response_language)
         )
 
     except Exception as e:
-        log_error("Unexpected OTP error", extra={"error": str(e)})
+        log_error("Unexpected OTP error", extra={"error": str(e), "ip": request.client.host})
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=get_message("server.error", data.response_language)

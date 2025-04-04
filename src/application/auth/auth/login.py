@@ -1,22 +1,21 @@
-# File: application/auth/controllers/login.py
-
 from typing import Optional, Annotated
-from fastapi import APIRouter, Request, HTTPException, status, Depends
+from fastapi import APIRouter, Request, status, Depends
 from pydantic import Field, ConfigDict, model_validator
 from redis.asyncio import Redis
 
 from common.schemas.request_base import BaseRequestModel
+from common.schemas.standard_response import StandardResponse
 from common.translations.messages import get_message
 from domain.auth.auth_services.auth_service.login import login_service
 from infrastructure.database.redis.redis_client import get_redis_client
 from common.logging.logger import log_info, log_error
+from common.exceptions.base_exception import BadRequestException, InternalServerErrorException
 
 router = APIRouter()
 
 
 class LoginRequest(BaseRequestModel):
-    """Request model for user, vendor, or admin login."""
-
+    """Login request body: phone or username with password."""
     phone: Optional[str] = Field(
         default=None,
         min_length=10,
@@ -54,6 +53,9 @@ class LoginRequest(BaseRequestModel):
 @router.post(
     "/login",
     status_code=status.HTTP_200_OK,
+    response_model=StandardResponse,
+    summary="Login for users, vendors, and admins",
+    tags=["Authentication"],
     responses={
         200: {"description": "Login successful, tokens returned."},
         400: {"description": "Invalid login request."},
@@ -68,6 +70,8 @@ async def login(
 ):
     """
     Unified login endpoint for users, vendors, and admins.
+
+    Accepts either `username` or `phone` with `password` and returns access/refresh tokens.
     """
     try:
         result = await login_service(
@@ -78,23 +82,36 @@ async def login(
             language=data.response_language,
             redis=redis
         )
-        log_info("Login successful", extra={"ip": request.client.host, "user": data.username or data.phone})
-        return result
-
-    except HTTPException as e:
-        log_error("Login HTTPException", extra={"detail": str(e.detail)})
-        raise
-
-    except ValueError as e:
-        log_error("Login validation error", extra={"error": str(e)})
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
+        log_info("Login successful", extra={
+            "ip": request.client.host,
+            "user": data.username or data.phone,
+            "endpoint": "/login"
+        })
+        return StandardResponse(
+            meta={
+                "message": get_message("auth.login.success", data.response_language),
+                "status": "success",
+                "code": 200
+            },
+            data=result
         )
 
+    except ValueError as e:
+        log_error("Login validation error", extra={
+            "error": str(e),
+            "ip": request.client.host,
+            "user": data.username or data.phone,
+            "endpoint": "/login"
+        })
+        raise BadRequestException(detail=get_message("auth.login.invalid", data.response_language))
+
     except Exception as e:
-        log_error("Unexpected login error", extra={"error": str(e)})
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        log_error("Unexpected login error", extra={
+            "error": str(e),
+            "ip": request.client.host,
+            "user": data.username or data.phone,
+            "endpoint": "/login"
+        }, exc_info=True)
+        raise InternalServerErrorException(
             detail=get_message("server.error", data.response_language)
         )

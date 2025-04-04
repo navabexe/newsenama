@@ -128,7 +128,9 @@ MESSAGES = {
     "server.error": {
         "fa": "خطای سرور رخ داد",
         "en": "Server error occurred"
-    }
+    },
+    "auth.login.too_many_attempts": "Too many login attempts. Please try again later.",
+
 }
 
 

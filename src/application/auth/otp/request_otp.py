@@ -1,26 +1,37 @@
-# File: application/auth/controllers/otp/request_otp.py
-
 import phonenumbers
-from fastapi import APIRouter, Request, HTTPException, status, Depends
+from fastapi import APIRouter, Request, status, Depends
 from pydantic import Field, model_validator, ConfigDict
-from redis.asyncio import Redis
 from typing import Annotated
 
+from redis.asyncio import Redis
+
 from common.schemas.request_base import BaseRequestModel
+from common.schemas.standard_response import StandardResponse
 from common.translations.messages import get_message
 from domain.auth.auth_services.otp_service.request import request_otp_service
 from infrastructure.database.redis.redis_client import get_redis_client
 from common.logging.logger import log_info, log_error
+from common.exceptions.base_exception import BadRequestException, InternalServerErrorException
 
 router = APIRouter()
 
 
 class RequestOTP(BaseRequestModel):
     """Request model for requesting an OTP."""
-
-    phone: Annotated[str, Field(description="Phone number (e.g., +989123456789)", examples=["+989123456789"])]
-    role: Annotated[str, Field(pattern=r"^(user|vendor)$", description="User or vendor", examples=["user", "vendor"])]
-    purpose: Annotated[str, Field(pattern=r"^(login|signup)$", description="Login or signup", examples=["login", "signup"])]
+    phone: Annotated[str, Field(
+        description="Phone number (e.g., +989123456789)",
+        examples=["+989123456789"]
+    )]
+    role: Annotated[str, Field(
+        pattern=r"^(user|vendor)$",
+        description="User or vendor",
+        examples=["user", "vendor"]
+    )]
+    purpose: Annotated[str, Field(
+        pattern=r"^(login|signup)$",
+        description="Login or signup",
+        examples=["login", "signup"]
+    )]
 
     model_config = ConfigDict(
         str_strip_whitespace=True,
@@ -42,9 +53,13 @@ class RequestOTP(BaseRequestModel):
 @router.post(
     "/request-otp",
     status_code=status.HTTP_200_OK,
+    response_model=StandardResponse,
+    summary="Request OTP for login or signup",
+    tags=["Authentication"],
     responses={
         200: {"description": "OTP sent successfully."},
         400: {"description": "Invalid input."},
+        429: {"description": "Too many attempts."},
         500: {"description": "Internal server error."}
     }
 )
@@ -54,7 +69,7 @@ async def request_otp(
     redis: Annotated[Redis, Depends(get_redis_client)]
 ):
     """
-    Request an OTP for a given phone number.
+    Request an OTP for login or signup via phone number.
     """
     try:
         result = await request_otp_service(
@@ -65,20 +80,37 @@ async def request_otp(
             language=data.response_language,
             redis=redis
         )
-        log_info("OTP requested", extra={"phone": data.phone, "ip": request.client.host, "purpose": data.purpose})
-        return result
-
-    except HTTPException as e:
-        log_error("OTP HTTPException", extra={"detail": str(e.detail)})
-        raise
+        log_info("OTP request successful", extra={
+            "phone": data.phone,
+            "role": data.role,
+            "purpose": data.purpose,
+            "ip": request.client.host,
+            "endpoint": "/request-otp"
+        })
+        return StandardResponse(
+            meta={
+                "message": result["message"],
+                "status": "success",
+                "code": 200
+            },
+            data={
+                "temporary_token": result["temporary_token"],
+                "expires_in": result["expires_in"]
+            }
+        )
 
     except ValueError as e:
-        log_error("OTP validation error", extra={"error": str(e)})
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        log_error("OTP validation error", extra={
+            "error": str(e),
+            "ip": request.client.host,
+            "endpoint": "/request-otp"
+        })
+        raise BadRequestException(detail=str(e))
 
     except Exception as e:
-        log_error("Unexpected error in OTP request", extra={"error": str(e)})
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=get_message("server.error", data.response_language)
-        )
+        log_error("OTP request failed", extra={
+            "error": str(e),
+            "ip": request.client.host,
+            "endpoint": "/request-otp"
+        }, exc_info=True)
+        raise InternalServerErrorException(detail=get_message("server.error", data.response_language))

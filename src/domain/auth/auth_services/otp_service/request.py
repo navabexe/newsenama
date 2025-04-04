@@ -1,16 +1,17 @@
-# File: domain/auth/auth_services/otp_service/request.py
 import os
 from datetime import datetime, timezone
 from uuid import uuid4
-
-from fastapi import HTTPException, status
 from redis.asyncio import Redis
+
+from jose import jwt
 
 from common.logging.logger import log_info, log_error
 from common.translations.messages import get_message
 from common.security.jwt.payload_builder import build_jwt_payload
 from common.config.settings import settings
 from common.utils.string_utils import generate_otp_code
+from common.exceptions.base_exception import TooManyRequestsException, InternalServerErrorException
+
 from infrastructure.database.redis.operations.expire import expire
 from infrastructure.database.redis.operations.get import get
 from infrastructure.database.redis.operations.incr import incr
@@ -18,6 +19,7 @@ from infrastructure.database.redis.operations.setex import setex
 from infrastructure.database.redis.redis_client import get_redis_client
 
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+
 
 async def request_otp_service(
     phone: str,
@@ -29,20 +31,7 @@ async def request_otp_service(
 ) -> dict:
     """
     Request an OTP for a given phone number and role.
-
-    Args:
-        phone (str): Phone number in E164 format (e.g., +989123456789).
-        role (str): Role of the user ('user' or 'vendor').
-        purpose (str): Purpose of the OTP ('login' or 'signup').
-        client_ip (str): IP address of the client.
-        language (str): Language for response messages (e.g., 'fa', 'en').
-        redis (Redis): Redis client instance.
-
-    Returns:
-        dict: Response containing temporary token, message, and expiration time.
-
-    Raises:
-        HTTPException: On rate limit exceed or internal errors.
+    Includes rate limiting and temporary token issuance.
     """
     try:
         if redis is None:
@@ -54,24 +43,22 @@ async def request_otp_service(
         rate_limit_1h = f"otp-limit-1h:{role}:{phone}"
         block_key = f"otp-blocked:{role}:{phone}"
 
+        # Check block status
         if await get(block_key, redis):
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=get_message("otp.too_many.blocked", language)
-            )
+            raise TooManyRequestsException(detail=get_message("otp.too_many.blocked", language))
 
+        # Enforce rate limits
         if (attempts := await get(rate_limit_1min, redis)) and int(attempts) >= 3:
-            raise HTTPException(status_code=429, detail=get_message("otp.too_many.1min", language))
+            raise TooManyRequestsException(detail=get_message("otp.too_many.1min", language))
         if (attempts := await get(rate_limit_10min, redis)) and int(attempts) >= 5:
-            raise HTTPException(status_code=429, detail=get_message("otp.too_many.10min", language))
+            raise TooManyRequestsException(detail=get_message("otp.too_many.10min", language))
         if (attempts := await get(rate_limit_1h, redis)) and int(attempts) >= 10:
             await setex(block_key, 3600, "1", redis)
-            raise HTTPException(status_code=429, detail=get_message("otp.too_many.blocked", language))
+            raise TooManyRequestsException(detail=get_message("otp.too_many.blocked", language))
 
+        # Generate OTP and payload
         otp_code = generate_otp_code()
         jti = str(uuid4())
-
-        # Generate temp token using payload builder
         payload = build_jwt_payload(
             token_type="temp",
             role=role,
@@ -81,25 +68,29 @@ async def request_otp_service(
             status="incomplete",
             phone_verified=False,
             jti=jti,
-            expires_in=300  # 5 minutes
+            expires_in=300
         )
-        from jose import jwt
+
         temp_token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
+        # Store OTP and token reference in Redis
         await setex(redis_key, 300, otp_code, redis)
         await setex(f"temp_token:{jti}", 300, phone, redis)
 
+        # Increment rate limit counters
         for key, ttl in [(rate_limit_1min, 60), (rate_limit_10min, 600), (rate_limit_1h, 3600)]:
             await incr(key, redis)
             await expire(key, ttl, redis)
 
+        # Structured logging
         log_data = {
             "phone": phone,
             "role": role,
             "purpose": purpose,
             "jti": jti,
             "ip": client_ip,
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "endpoint": "request_otp_service"
         }
         if ENVIRONMENT == "development":
             log_data["otp"] = otp_code
@@ -112,8 +103,15 @@ async def request_otp_service(
             "expires_in": 300
         }
 
-    except HTTPException:
+    except TooManyRequestsException:
         raise
+
     except Exception as e:
-        log_error("OTP request failed", extra={"phone": phone, "error": str(e), "ip": client_ip}, exc_info=True)
-        raise HTTPException(status_code=500, detail=get_message("server.error", language))
+        log_error("OTP request failed", extra={
+            "error": str(e),
+            "phone": phone,
+            "role": role,
+            "ip": client_ip,
+            "endpoint": "request_otp_service"
+        }, exc_info=True)
+        raise InternalServerErrorException(detail=get_message("server.error", language))
