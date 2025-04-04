@@ -1,4 +1,5 @@
-# src/infrastructure/database/redis/redis_client.py
+# File: infrastructure/database/redis/redis_client.py
+
 import ssl
 from typing import Optional
 
@@ -7,6 +8,7 @@ from redis.exceptions import RedisError
 
 from common.config.settings import settings
 from common.logging.logger import log_info, log_error
+from common.exceptions.base_exception import ServiceUnavailableException
 
 # Redis connection pool (global, but managed)
 redis_pool: Optional[ConnectionPool] = None
@@ -43,9 +45,11 @@ async def init_redis_pool() -> ConnectionPool:
         redis_client = Redis(connection_pool=redis_pool)
         await redis_client.ping()
         log_info("Redis connection established", extra={"host": settings.REDIS_HOST, "ssl": settings.REDIS_USE_SSL})
+
     except RedisError as e:
-        log_error("Redis connection failed", extra={"error": str(e)})
-        raise
+        log_error("Redis connection failed", extra={"error": str(e), "host": settings.REDIS_HOST}, exc_info=True)
+        raise ServiceUnavailableException("Redis unavailable")
+
     return redis_pool
 
 
@@ -54,15 +58,20 @@ async def close_redis_pool():
     global redis_pool, redis_client
     if redis_client:
         await redis_client.close()
+    if redis_pool:
         await redis_pool.disconnect()
-        log_info("Redis connection pool closed")
-        redis_pool = None
-        redis_client = None
+    log_info("Redis connection pool closed")
+    redis_pool = None
+    redis_client = None
 
 
 async def get_redis_client() -> Redis:
     """Dependency to get Redis client."""
     global redis_client
-    if redis_client is None or not await redis_client.ping():
-        await init_redis_pool()
-    return redis_client
+    try:
+        if redis_client is None or not await redis_client.ping():
+            await init_redis_pool()
+        return redis_client
+    except Exception as e:
+        log_error("Failed to get Redis client", extra={"error": str(e)}, exc_info=True)
+        raise ServiceUnavailableException("Could not connect to Redis")

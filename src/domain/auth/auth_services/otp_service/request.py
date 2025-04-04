@@ -8,9 +8,9 @@ from redis.asyncio import Redis
 
 from common.logging.logger import log_info, log_error
 from common.translations.messages import get_message
-from common.utils.token_utils import generate_otp_code
 from common.security.jwt.payload_builder import build_jwt_payload
 from common.config.settings import settings
+from common.utils.string_utils import generate_otp_code
 from infrastructure.database.redis.operations.expire import expire
 from infrastructure.database.redis.operations.get import get
 from infrastructure.database.redis.operations.incr import incr

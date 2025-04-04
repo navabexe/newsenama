@@ -1,28 +1,36 @@
-import secrets
-from typing import Literal
+# File: common/utils/token_utils.py
 
-def generate_otp_code(length: int = 6, type: Literal["numeric", "alphanumeric"] = "numeric") -> str:
+import jwt
+from typing import Dict
+from jwt import ExpiredSignatureError, InvalidTokenError
+from datetime import datetime, timezone
+
+
+SECRET_KEY_PLACEHOLDER = "replace_me"  # replace when decoding requires signature validation
+
+
+def get_token_payload(token: str) -> Dict:
     """
-    Generate a secure OTP code.
-
-    Args:
-        length (int): Length of the OTP code (default: 6).
-        type (Literal["numeric", "alphanumeric"]): Type of OTP code (default: "numeric").
-
-    Returns:
-        str: Generated OTP code.
-
-    Raises:
-        ValueError: If length is less than 4 or invalid type is provided.
+    Decodes JWT and returns payload without verifying signature.
+    Useful for extracting non-sensitive claims.
     """
-    if length < 4:
-        raise ValueError("OTP length must be at least 4 characters for security")
+    try:
+        return jwt.decode(token, options={"verify_signature": False, "verify_exp": False}, algorithms=["HS256"])
+    except InvalidTokenError:
+        raise ValueError("Invalid token format")
 
-    if type == "numeric":
-        characters = "0123456789"
-    elif type == "alphanumeric":
-        characters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-    else:
-        raise ValueError("Invalid OTP type. Use 'numeric' or 'alphanumeric'")
 
-    return ''.join(secrets.choice(characters) for _ in range(length))
+def get_token_exp(token: str) -> int:
+    payload = get_token_payload(token)
+    exp = payload.get("exp")
+    if exp is None:
+        raise ValueError("Token has no expiration (exp) field")
+    return exp
+
+
+def is_token_expired(token: str) -> bool:
+    try:
+        exp = get_token_exp(token)
+        return datetime.now(timezone.utc).timestamp() > exp
+    except ValueError:
+        return True

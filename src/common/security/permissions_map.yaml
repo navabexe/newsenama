@@ -1,0 +1,32 @@
+# File: src/common/security/permissions_map.yaml
+guest:
+  - read:products
+  - read:vendors
+
+user:
+  - read:products
+  - create:orders
+  - message:vendor
+  - manage:profile
+
+vendor:
+  pending:
+    - read:profile
+  collaborative:
+    - attach:product
+    - read:profile
+    - write:profile
+  public:
+    - write:products
+    - read:orders
+    - manage:ads
+    - message:user
+  private:
+    - read:profile
+    - write:profile
+    - manage:store
+  temporarily_closed:
+    - read:profile
+
+admin:
+  - "*"

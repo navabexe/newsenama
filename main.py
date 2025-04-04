@@ -7,10 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, PlainTextResponse
 from starlette.responses import JSONResponse
 
-from application.access_control.controllers.access_control import router as access_control_router
-# Import routers
-from application.auth.controllers.auth_controller import router as auth_router
-from application.users.controllers.profile.set_username import router as username_router
+from application.router.all_endpoints import all_routers
+
 from common.logging.logger import log_info, log_error
 from infrastructure.database.mongodb.connection import MongoDBConnection
 from infrastructure.database.mongodb.repository import MongoRepository
@@ -79,9 +77,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 
 # Include API routers
-app.include_router(auth_router)
-app.include_router(access_control_router)
-app.include_router(username_router, prefix="/profile")
+app.include_router(all_routers)
 
 
 # Root endpoint redirecting to docs

@@ -13,12 +13,6 @@ def hash_password(password: str) -> str:
     """
     Hash a password for secure storage.
 
-    Args:
-        password (str): Plain text password to hash.
-
-    Returns:
-        str: Hashed password.
-
     Raises:
         ValueError: If password is empty or invalid.
         Exception: If hashing fails for other reasons.
@@ -37,13 +31,6 @@ def hash_password(password: str) -> str:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
     Verify a plain password against a hashed password.
-
-    Args:
-        plain_password (str): Plain text password to verify.
-        hashed_password (str): Hashed password from storage.
-
-    Returns:
-        bool: True if password matches, False otherwise.
 
     Raises:
         ValueError: If inputs are empty or invalid.
