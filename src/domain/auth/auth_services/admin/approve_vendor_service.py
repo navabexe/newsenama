@@ -1,3 +1,5 @@
+# File: domain/auth/auth_services/admin/approve_vendor_service.py
+
 from datetime import datetime, timezone
 from uuid import uuid4
 from bson import ObjectId
@@ -13,6 +15,8 @@ from infrastructure.database.redis.operations.delete import delete
 from infrastructure.database.redis.operations.keys import keys
 from infrastructure.database.redis.operations.hset import hset
 from infrastructure.database.redis.operations.expire import expire
+from infrastructure.database.redis.operations.incr import incr
+from infrastructure.database.redis.operations.get import get
 from common.exceptions.base_exception import (
     NotFoundException,
     ForbiddenException,
@@ -20,37 +24,48 @@ from common.exceptions.base_exception import (
     InternalServerErrorException,
     UnauthorizedException
 )
+from domain.notification.notification_services.builder import build_notification_content
+from domain.notification.notification_services.dispatcher import dispatch_notification
+from domain.notification.entities.notification_entity import NotificationChannel
 
-
-async def notify_vendor_of_status(vendor_id: str, phone: str, status: str, client_ip: str, language: str):
-    """Notify vendor about approval/rejection via SMS and INAPP."""
+async def notify_vendor_of_status(vendor_id: str, phone: str, status: str, client_ip: str, language: str) -> bool:
     try:
         message_key = "vendor.approved" if status == "active" else "vendor.rejected"
-        title = get_message("vendor.status_update.title", language)
-        body = get_message(message_key, language)
-
+        content = await build_notification_content(message_key, language)
+        await dispatch_notification(
+            receiver_id=vendor_id,
+            receiver_type="vendor",
+            title=content["title"],
+            body=content["body"],
+            channel=NotificationChannel.INAPP,
+            reference_type="vendor",
+            reference_id=vendor_id
+        )
+        # SMS as pending (no real sending yet)
         now = datetime.now(timezone.utc).isoformat()
-
-        for channel in ["inapp", "sms"]:
-            await insert_one("notifications", {
-                "receiver_type": "vendor",
-                "receiver_id": vendor_id,
-                "title": title,
-                "body": body,
-                "channel": channel,
-                "reference_type": "vendor",
-                "reference_id": vendor_id,
-                "status": "sent" if channel == "inapp" else "pending",
-                "sent_at": now if channel == "inapp" else None,
-                "created_at": now
-            })
-
+        await insert_one("notifications", {
+            "receiver_type": "vendor",
+            "receiver_id": vendor_id,
+            "title": content["title"],
+            "body": content["body"],
+            "channel": "sms",
+            "reference_type": "vendor",
+            "reference_id": vendor_id,
+            "status": "pending",
+            "created_at": now
+        })
         log_info("Vendor notified successfully", extra={"vendor_id": vendor_id, "status": status, "ip": client_ip})
-
+        return True
     except Exception as e:
         log_error("Failed notifying vendor", extra={"vendor_id": vendor_id, "error": str(e)}, exc_info=True)
-        raise InternalServerErrorException(detail=get_message("server.error", language))
+        return False
 
+async def log_audit(action: str, details: dict):
+    await insert_one("audit_logs", {
+        "action": action,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "details": details
+    })
 
 async def approve_vendor_service(
     current_user: dict,
@@ -60,8 +75,15 @@ async def approve_vendor_service(
     redis: Redis,
     language: str = "fa"
 ) -> dict:
-    """Approve or reject vendor profiles (admin-only action)."""
     try:
+        # Rate limiting
+        rate_limit_key = f"approve_vendor_limit:{current_user.get('user_id')}"
+        attempts = await get(rate_limit_key, redis)
+        if attempts and int(attempts) >= 10:
+            raise BadRequestException(detail=get_message("vendor.too_many", language))
+        await incr(rate_limit_key, redis)
+        await expire(rate_limit_key, 3600, redis)
+
         if current_user.get("role") != "admin":
             log_error("Unauthorized attempt detected", extra={"user_id": current_user.get("user_id"), "ip": client_ip})
             raise ForbiddenException(detail=get_message("auth.forbidden", language))
@@ -96,11 +118,11 @@ async def approve_vendor_service(
                 await delete(key, redis=redis)
                 log_info("Temporary tokens removed", extra={"vendor_id": vendor_id, "key": key})
 
-        await notify_vendor_of_status(str(vendor["_id"]), vendor["phone"], new_status, client_ip, language)
+        notification_sent = await notify_vendor_of_status(str(vendor["_id"]), vendor["phone"], new_status, client_ip, language)
 
         payload = {
             "status": new_status,
-            "message": get_message(f"vendor.{action}ed", language)
+            "notification_sent": notification_sent
         }
 
         if action == "approve":
@@ -134,20 +156,30 @@ async def approve_vendor_service(
             await hset(session_key, mapping={
                 "ip": client_ip,
                 "created_at": datetime.now(timezone.utc).isoformat(),
-                "device": device, "status": "active", "jti": session_id
+                "device": device,
+                "status": "active",
+                "jti": session_id
             }, redis=redis)
             await expire(session_key, 86400, redis=redis)
 
-            payload.update({"access_token": access_token})
-            if refresh_token:
-                payload["refresh_token"] = refresh_token
+            payload.update({"access_token": access_token, "refresh_token": refresh_token})
 
-        log_info("Vendor approval action completed", extra={"vendor_id": vendor_id, "status": new_status})
+        audit_data = {
+            "admin_id": current_user.get("user_id"),
+            "vendor_id": vendor_id,
+            "action": action,
+            "status": new_status,
+            "ip": client_ip,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        await log_audit(f"vendor_{action}", audit_data)
+        log_info("Vendor approval action completed", extra=audit_data)
+
         return {
             "meta": {
                 "status": "success",
                 "code": 200,
-                "message": payload.pop("message")
+                "message": get_message(f"vendor.{action}ed", language)
             },
             "data": payload
         }

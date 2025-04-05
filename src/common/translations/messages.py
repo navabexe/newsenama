@@ -185,9 +185,42 @@ MESSAGES = {
         "en": "Vendor {vendor_name} with phone number {vendor_phone} has submitted their profile for review."
     },
     "notification.admin.vendor_submitted.title": {
-    "fa": "ارسال پروفایل فروشنده",
-    "en": "Vendor Profile Submitted"
+        "fa": "ارسال پروفایل فروشنده",
+        "en": "Vendor Profile Submitted"
     },
+    "auth.login.success.user": {
+        "fa": "کاربر عزیز، خوش آمدید!",
+        "en": "Welcome, dear user!"
+    },
+    "auth.login.success.vendor": {
+        "fa": "فروشنده گرامی، ورود شما موفق بود!",
+        "en": "Hello Vendor, you have successfully logged in!"
+    },
+    "auth.login.success.admin": {
+        "fa": "ادمین محترم، به پنل مدیریت خوش آمدید!",
+        "en": "Admin, welcome to the admin panel!"
+    },
+    "notification.sent": {
+        "fa": "نوتیفیکیشن با موفقیت ارسال شد",
+        "en": "Notification sent successfully"
+    },
+    "profile.too_many": {
+        "fa": "تعداد درخواست‌های تکمیل پروفایل بیش از حد است",
+        "en": "Too many profile completion requests"
+    },
+    "admin.user_joined": {
+        "fa": {"title": "کاربر جدید", "body": "کاربر {user_name} با شماره {user_phone} به سیستم پیوست"},
+        "en": {"title": "New User", "body": "User {user_name} with phone {user_phone} joined the system"}
+    },
+    "vendor.too_many": {
+        "fa": "تعداد درخواست‌های تأیید/رد بیش از حد است",
+        "en": "Too many approve/reject requests"
+    },
+    "vendor.invalid_action": {
+        "fa": "عملیات نامعتبر است",
+        "en": "Invalid action"
+    }
+
 }
 
 

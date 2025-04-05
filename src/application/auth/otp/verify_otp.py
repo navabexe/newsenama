@@ -50,7 +50,10 @@ async def verify_otp_endpoint(
             temporary_token=data.temporary_token,
             client_ip=client_ip,
             language=language,
-            redis=redis
+            redis=redis,
+            request_id=data.request_id,
+            client_version=data.client_version,
+            device_fingerprint=data.device_fingerprint
         )
 
         log_info("OTP verified", extra={

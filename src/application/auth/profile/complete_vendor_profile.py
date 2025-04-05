@@ -1,10 +1,10 @@
-# File: complete_vendor_profile.py
+# File: src/application/auth/complete_vendor_profile.py
 
 from fastapi import APIRouter, Request, status, Depends, HTTPException
 from redis.asyncio import Redis
 from typing import Annotated
 
-from domain.auth.auth_services.auth_service.complete_profile_service import complete_profile_service
+from domain.auth.auth_services.profile.complete_profile_service import complete_profile_service
 from domain.auth.entities.auth_models import CompleteVendorProfile
 from infrastructure.database.redis.redis_client import get_redis_client
 
@@ -32,6 +32,7 @@ async def complete_vendor_profile(
     redis: Annotated[Redis, Depends(get_redis_client)]
 ):
     client_ip = extract_client_ip(request)
+    language = data.response_language
 
     try:
         result = await complete_profile_service(
@@ -48,7 +49,7 @@ async def complete_vendor_profile(
             vendor_type=data.vendor_type,
             languages=data.preferred_languages,
             request=request,
-            language=data.response_language,
+            language=language,
             redis=redis
         )
 
@@ -61,10 +62,12 @@ async def complete_vendor_profile(
             "device_fingerprint": data.device_fingerprint
         })
 
-        return StandardResponse(**result)
+        return StandardResponse(
+            meta=result["meta"],
+            data=result["data"]
+        )
 
     except HTTPException as http_exc:
-        # تمام استثناءهای مشتق از HTTPException، مثل Unauthorized, BadRequest, ...
         log_error("Handled HTTPException in vendor profile", extra={
             "error": str(http_exc.detail),
             "ip": client_ip,
@@ -84,4 +87,4 @@ async def complete_vendor_profile(
             "client_version": data.client_version,
             "device_fingerprint": data.device_fingerprint
         }, exc_info=True)
-        raise InternalServerErrorException(detail=get_message("server.error", data.response_language))
+        raise InternalServerErrorException(detail=get_message("server.error", language))

@@ -1,64 +1,36 @@
-# File: Root/src/domain/notification/notification_services/notification_service.py
+# File: domain/notification/notification_services/notification_service.py
 
-from datetime import datetime, UTC
-from typing import Optional
+from domain.notification.entities.notification_entity import NotificationChannel
+from domain.notification.notification_services.builder import build_notification_content
+from domain.notification.notification_services.dispatcher import dispatch_notification
 
-from domain.notification.entities.notification_entity import Notification, NotificationChannel, NotificationStatus
-from common.logging.logger import log_info, log_error
-from infrastructure.database.mongodb.mongo_client import insert_one
+class NotificationService:
+    async def send(
+        self,
+        receiver_id: str,
+        receiver_type: str,
+        template_key: str,
+        channel: NotificationChannel = NotificationChannel.INAPP,
+        variables: dict = None,
+        reference_type: str = None,
+        reference_id: str = None,
+        created_by: str = "system",
+        language: str = "fa"
+    ) -> str:
+        try:
+            content = await build_notification_content(template_key, language=language, variables=variables or {})
+            notification_id = await dispatch_notification(
+                receiver_id=receiver_id,
+                receiver_type=receiver_type,
+                title=content["title"],
+                body=content["body"],
+                channel=channel,
+                reference_type=reference_type,
+                reference_id=reference_id,
+                created_by=created_by
+            )
+            return notification_id
+        except Exception as e:
+            raise Exception(f"Notification service failed: {str(e)}")
 
-
-async def send_notification(
-    receiver_id: str,
-    receiver_type: str,
-    title: str,
-    body: str,
-    channel: NotificationChannel = NotificationChannel.INAPP,
-    reference_type: Optional[str] = None,
-    reference_id: Optional[str] = None
-) -> Notification:
-    """
-    Send a notification to the specified user, vendor, or admin.
-
-    Args:
-        receiver_id: ID of the recipient
-        receiver_type: Type of recipient (user, vendor, admin)
-        title: Short title of the notification
-        body: Main message content
-        channel: Notification channel (default is in-app)
-        reference_type: Optional type of related entity (order, product)
-        reference_id: Optional ID of related entity
-
-    Returns:
-        Notification object with metadata
-    """
-    try:
-        notification = Notification(
-            receiver_id=receiver_id,
-            receiver_type=receiver_type,
-            title=title,
-            body=body,
-            channel=channel,
-            reference_type=reference_type,
-            reference_id=reference_id,
-            status=NotificationStatus.SENT,
-            sent_at=datetime.now(UTC).isoformat()
-        )
-
-        # Insert into MongoDB collection "notifications"
-        notification_dict = notification.dict()
-        notification_id = await insert_one("notifications", notification_dict)
-        notification.id = str(notification_id)
-
-        log_info("Notification sent", extra={
-            "receiver_id": receiver_id,
-            "receiver_type": receiver_type,
-            "channel": channel,
-            "title": title
-        })
-
-        return notification
-
-    except Exception as e:
-        log_error("Notification failed", extra={"error": str(e)})
-        raise
+notification_service = NotificationService()

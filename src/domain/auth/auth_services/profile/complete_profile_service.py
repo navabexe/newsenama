@@ -1,3 +1,5 @@
+# File: domain/auth/auth_services/auth_service/complete_profile_service.py
+
 from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Optional, List
@@ -20,19 +22,19 @@ from domain.notification.notification_services.builder import build_notification
 from domain.notification.notification_services.dispatcher import dispatch_notification
 from domain.notification.entities.notification_entity import NotificationChannel
 
-from infrastructure.database.mongodb.mongo_client import find_one, update_one, find
+from infrastructure.database.mongodb.mongo_client import find_one, update_one, find, insert_one
 from infrastructure.database.redis.redis_client import get_redis_client
 from infrastructure.database.redis.operations.delete import delete
 from infrastructure.database.redis.operations.scan import scan_keys
 from infrastructure.database.redis.operations.expire import expire
 from infrastructure.database.redis.operations.hset import hset
-
+from infrastructure.database.redis.operations.incr import incr
+from infrastructure.database.redis.operations.get import get
 
 async def delete_all_sessions(user_id: str, redis: Redis):
     keys = await scan_keys(redis, f"sessions:{user_id}:*")
     for key in keys:
         await redis.delete(key)
-
 
 def normalize_vendor_data(data: dict) -> dict:
     return {
@@ -44,7 +46,6 @@ def normalize_vendor_data(data: dict) -> dict:
         "show_followers_publicly": data.get("show_followers_publicly", True),
     }
 
-
 async def validate_business_categories(ids: List[str]):
     query_ids = [ObjectId(cid) if ObjectId.is_valid(cid) else cid for cid in ids]
     existing = await find("business_categories", {"_id": {"$in": query_ids}})
@@ -53,6 +54,52 @@ async def validate_business_categories(ids: List[str]):
     if invalid:
         raise BadRequestException(detail=f"Invalid business category IDs: {', '.join(invalid)}")
 
+async def log_audit(action: str, details: dict):
+    await insert_one("audit_logs", {
+        "action": action,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "details": details
+    })
+
+async def send_profile_notifications(
+    role: str,
+    user_id: str,
+    status: str,
+    language: str,
+    business_name: Optional[str] = None,
+    first_name: Optional[str] = None,
+    phone: str = None
+) -> bool:
+    try:
+        if role == "vendor" and status == "pending":
+            vendor_msg = await build_notification_content("vendor.profile_pending", language, {
+                "name": business_name,
+                "phone": phone
+            })
+            await dispatch_notification(user_id, "vendor", vendor_msg["title"], vendor_msg["body"], NotificationChannel.INAPP, "profile", user_id)
+
+            admin_msg = await build_notification_content("admin.vendor_submitted", language, {
+                "vendor_name": business_name,
+                "vendor_phone": phone
+            })
+            await dispatch_notification("admin", "admin", admin_msg["title"], admin_msg["body"], NotificationChannel.INAPP, "profile", user_id)
+
+        elif role == "user" and status == "active":
+            user_msg = await build_notification_content("user.profile_completed", language, {
+                "name": first_name,
+                "phone": phone
+            })
+            await dispatch_notification(user_id, "user", user_msg["title"], user_msg["body"], NotificationChannel.INAPP, "profile", user_id)
+
+            admin_msg = await build_notification_content("admin.user_joined", language, {
+                "user_name": first_name,
+                "user_phone": phone
+            })
+            await dispatch_notification("admin", "admin", admin_msg["title"], admin_msg["body"], NotificationChannel.INAPP, "profile", user_id)
+        return True
+    except Exception as notify_err:
+        log_error("Profile notification failed", extra={"error": str(notify_err)})
+        return False
 
 async def complete_profile_service(
     temporary_token: str,
@@ -72,10 +119,19 @@ async def complete_profile_service(
     language: str = "fa",
     redis: Redis = None
 ) -> dict:
-    try:
-        redis = redis or await get_redis_client()
-        payload = await decode_token(temporary_token, token_type="temp", redis=redis)
+    redis = redis or await get_redis_client()
+    client_ip = extract_client_ip(request)
 
+    # Rate limiting
+    rate_limit_key = f"profile_complete_limit:{temporary_token}"
+    attempts = await get(rate_limit_key, redis)
+    if attempts and int(attempts) >= 5:
+        raise BadRequestException(detail=get_message("profile.too_many", language))
+    await incr(rate_limit_key, redis)
+    await expire(rate_limit_key, 3600, redis)  # 5 attempts per hour
+
+    try:
+        payload = await decode_token(temporary_token, token_type="temp", redis=redis)
         phone = payload.get("sub")
         role = payload.get("role")
         jti = payload.get("jti")
@@ -102,6 +158,9 @@ async def complete_profile_service(
         user_id = str(user["_id"])
         update_data = {"updated_at": datetime.now(timezone.utc)}
 
+        VALID_VISIBILITY = ["COLLABORATIVE", "PUBLIC", "PRIVATE", "TEMPORARILY_CLOSED"]
+        VALID_VENDOR_TYPES = ["BASIC", "PRO"]
+
         if role == "user":
             if not first_name or not last_name:
                 raise BadRequestException(detail=get_message("auth.profile.incomplete", language))
@@ -117,6 +176,10 @@ async def complete_profile_service(
             if first_name: update_data["first_name"] = first_name.strip()
             if last_name: update_data["last_name"] = last_name.strip()
             if business_category_ids: await validate_business_categories(business_category_ids)
+            if visibility and visibility not in VALID_VISIBILITY:
+                raise BadRequestException(detail=f"Visibility must be one of {VALID_VISIBILITY}")
+            if vendor_type and vendor_type not in VALID_VENDOR_TYPES:
+                raise BadRequestException(detail=f"Vendor type must be one of {VALID_VENDOR_TYPES}")
             update_data.update({
                 "business_name": business_name.strip(),
                 "city": city.strip() if city else None,
@@ -148,8 +211,7 @@ async def complete_profile_service(
         profile_model = UserJWTProfile if role == "user" else VendorJWTProfile
         profile_data = profile_model(**updated_user).model_dump()
         token_lang = (languages or [language])[0]
-        client_ip = extract_client_ip(request)
-        device = getattr(request, 'device_fingerprint', "unknown")
+        device = getattr(request, 'device_fingerprint', "unknown") if request else "unknown"
 
         access_token = await generate_access_token(
             user_id=user_id,
@@ -174,48 +236,28 @@ async def complete_profile_service(
             }, redis=redis)
             await expire(session_key, 86400, redis=redis)
 
-        log_info("Profile completed", extra={
+        audit_data = {
             "user_id": user_id,
             "role": role,
             "status": updated_user["status"],
             "ip": client_ip,
             "session_id": session_id,
-            "device": device
-        })
+            "device": device,
+            "request_id": getattr(request, "request_id", None) if request else None,
+            "client_version": getattr(request, "client_version", None) if request else None
+        }
+        await log_audit(f"{role}_profile_completed", audit_data)
+        log_info("Profile completed", extra=audit_data)
 
-        try:
-            if role == "vendor" and updated_user["status"] == "pending":
-                vendor_msg = await build_notification_content("vendor.profile_pending", language, {
-                    "name": business_name,
-                    "phone": phone
-                })
-                await dispatch_notification(user_id, "vendor", vendor_msg["title"], vendor_msg["body"], NotificationChannel.INAPP, "profile", user_id)
-
-                admin_msg = await build_notification_content("admin.vendor_submitted", language, {
-                    "vendor_name": business_name,
-                    "vendor_phone": phone
-                })
-                await dispatch_notification("admin", "admin", admin_msg["title"], admin_msg["body"], NotificationChannel.INAPP, "profile", user_id)
-
-            elif role == "user" and updated_user["status"] == "active":
-                user_msg = await build_notification_content("user.profile_completed", language, {
-                    "name": first_name,
-                    "phone": phone
-                })
-                await dispatch_notification(user_id, "user", user_msg["title"], user_msg["body"], NotificationChannel.INAPP, "profile", user_id)
-
-                admin_msg = await build_notification_content("admin.user_joined", language, {
-                    "user_name": first_name,
-                    "user_phone": phone
-                })
-                await dispatch_notification("admin", "admin", admin_msg["title"], admin_msg["body"], NotificationChannel.INAPP, "profile", user_id)
-
-        except Exception as notify_err:
-            log_error("Profile notification failed", extra={"error": str(notify_err)})
+        notification_sent = await send_profile_notifications(
+            role, user_id, updated_user["status"], language,
+            business_name=business_name, first_name=first_name, phone=phone
+        )
 
         response_data = {
             "access_token": access_token,
-            "status": updated_user["status"]
+            "status": updated_user["status"],
+            "notification_sent": notification_sent
         }
         if refresh_token:
             response_data["refresh_token"] = refresh_token

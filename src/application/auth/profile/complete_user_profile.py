@@ -1,4 +1,4 @@
-# File: complete_user_profile.py
+# File: src/application/auth/complete_user_profile.py
 
 from fastapi import APIRouter, Request, status, Depends, HTTPException
 from pydantic import EmailStr, Field, ConfigDict
@@ -8,7 +8,7 @@ from redis.asyncio import Redis
 from common.schemas.request_base import BaseRequestModel
 from common.schemas.standard_response import StandardResponse, Meta
 from common.translations.messages import get_message
-from domain.auth.auth_services.auth_service.complete_profile_service import complete_profile_service
+from domain.auth.auth_services.profile.complete_profile_service import complete_profile_service
 from infrastructure.database.redis.redis_client import get_redis_client
 
 from common.exceptions.base_exception import (
@@ -19,7 +19,6 @@ from common.logging.logger import log_info, log_error
 from common.utils.ip_utils import extract_client_ip
 
 router = APIRouter()
-
 
 class CompleteUserProfile(BaseRequestModel):
     temporary_token: Annotated[str, Field(description="Temporary token from verify-otp")]
@@ -36,7 +35,6 @@ class CompleteUserProfile(BaseRequestModel):
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-
 @router.post(
     "/complete-user-profile",
     status_code=status.HTTP_200_OK,
@@ -50,6 +48,7 @@ async def complete_user_profile(
     redis: Annotated[Redis, Depends(get_redis_client)]
 ):
     client_ip = extract_client_ip(request)
+    language = data.response_language
 
     try:
         result = await complete_profile_service(
@@ -59,7 +58,7 @@ async def complete_user_profile(
             email=data.email,
             languages=data.preferred_languages,
             request=request,
-            language=data.response_language,
+            language=language,
             redis=redis
         )
 
@@ -72,7 +71,10 @@ async def complete_user_profile(
             "device_fingerprint": data.device_fingerprint
         })
 
-        return StandardResponse(**result)
+        return StandardResponse(
+            meta=result["meta"],
+            data=result["data"]
+        )
 
     except HTTPException as http_exc:
         log_error("Handled HTTPException in profile completion", extra={
@@ -94,4 +96,4 @@ async def complete_user_profile(
             "client_version": data.client_version,
             "device_fingerprint": data.device_fingerprint
         }, exc_info=True)
-        raise InternalServerErrorException(detail=get_message("server.error", data.response_language))
+        raise InternalServerErrorException(detail=get_message("server.error", language))

@@ -34,7 +34,10 @@ async def request_otp_endpoint(
             purpose=data.purpose,
             request=request,
             language=data.response_language,
-            redis=redis
+            redis=redis,
+            request_id=data.request_id,
+            client_version=data.client_version,
+            device_fingerprint=data.device_fingerprint
         )
 
         log_info("OTP request successful", extra={
@@ -56,7 +59,8 @@ async def request_otp_endpoint(
             ),
             data={
                 "temporary_token": result["temporary_token"],
-                "expires_in": result["expires_in"]
+                "expires_in": result["expires_in"],
+                "notification_sent": result["notification_sent"]
             }
         )
 

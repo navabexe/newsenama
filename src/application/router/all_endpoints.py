@@ -6,10 +6,10 @@ from application.auth.auth import (
     sessions,
     login,
     refresh_token,
-    approve_vendor,
     logout,
     force_logout
 )
+from application.auth.admin import approve_vendor
 from application.auth.profile import (
     complete_user_profile,
     complete_vendor_profile
@@ -18,10 +18,13 @@ from application.auth.otp import (
     request_otp,
     verify_otp
 )
+from application.notification.send_notification import router as send_notification_router  # Add this
 
 
 all_routers = APIRouter()
 
+
+all_routers.include_router(send_notification_router)
 # Include your smaller routers in the 'all_routers' APIRouter
 all_routers.include_router(request_otp.router)
 all_routers.include_router(verify_otp.router)

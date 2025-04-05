@@ -1,3 +1,5 @@
+# File: domain/auth/auth_services/auth_service/login.py
+
 from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Dict, Optional
@@ -22,9 +24,9 @@ from infrastructure.database.redis.operations.hset import hset
 from infrastructure.database.redis.operations.expire import expire
 from infrastructure.database.redis.redis_client import get_redis_client
 
+
 MAX_ATTEMPTS = 5
 LOCKOUT_SECONDS = 600  # 10 minutes
-
 
 async def login_service(
     phone: Optional[str],
@@ -52,6 +54,7 @@ async def login_service(
         attempts = int(await redis.get(login_key) or 0)
 
         if attempts >= MAX_ATTEMPTS:
+            # auth.login.too_many_attempts
             raise TooManyRequestsException(detail=get_message("auth.login.too_many_attempts", language))
 
         phone = phone.strip() if phone else None
@@ -62,30 +65,34 @@ async def login_service(
 
         if phone:
             user = await find_one("users", {"phone": phone}) or await find_one("vendors", {"phone": phone})
-            collection = "vendors" if user and user.get("type") == "vendor" else "users"
+            collection = "vendors" if (user and user.get("type") == "vendor") else "users"
         else:
             user = await find_one("admins", {"username": username})
             collection = "admins"
 
         if not user:
+            # auth.login.invalid
             await redis.incr(login_key)
             await redis.expire(login_key, LOCKOUT_SECONDS)
             raise UnauthorizedException(detail=get_message("auth.login.invalid", language))
 
         if not user.get("password"):
+            # auth.login.no_password
             await redis.incr(login_key)
             await redis.expire(login_key, LOCKOUT_SECONDS)
             raise UnauthorizedException(detail=get_message("auth.login.no_password", language))
 
         if not verify_password(password, user["password"]):
+            # auth.login.invalid
             await redis.incr(login_key)
             await redis.expire(login_key, LOCKOUT_SECONDS)
             raise UnauthorizedException(detail=get_message("auth.login.invalid", language))
 
         if user.get("status") != "active":
+            # auth.login.not_active
             raise ForbiddenException(detail=get_message("auth.login.not_active", language))
 
-        await redis.delete(login_key)  # Clear failed attempts
+        await redis.delete(login_key)
 
         user_id = str(user["_id"])
         role = user.get("role", "admin" if collection == "admins" else "vendor" if collection == "vendors" else "user")
@@ -114,7 +121,6 @@ async def login_service(
             user_profile=user_profile,
             language=language
         )
-
         refresh_token = await generate_refresh_token(
             user_id=user_id,
             role=role,
