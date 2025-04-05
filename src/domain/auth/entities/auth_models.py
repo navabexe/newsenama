@@ -1,19 +1,24 @@
 # File: domain/auth/entities/auth_models.py
+
 from typing import Optional, List
-from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
+import re
 
 from common.schemas.request_base import BaseRequestModel
 
-
 class Location(BaseModel):
     """Geographical location coordinates."""
-
     lat: float = Field(..., ge=-90, le=90, description="Latitude")
     lng: float = Field(..., ge=-180, le=180, description="Longitude")
 
 
+# ---------------------------
+# CompleteUserProfile
+# ---------------------------
 class CompleteUserProfile(BaseRequestModel):
-    """Request model for completing a user profile."""
+    """
+    Request model for completing a user profile.
+    """
 
     temporary_token: str = Field(..., min_length=1, description="Temporary token from verify-otp")
     first_name: str = Field(..., min_length=2, max_length=50, description="User's first name")
@@ -27,15 +32,39 @@ class CompleteUserProfile(BaseRequestModel):
     languages: List[str] = Field(default_factory=list, description="Preferred languages")
     preferred_language: Optional[str] = Field(default="fa", description="Preferred language for messages")
 
+    request_id: Optional[str] = Field(default=None, max_length=36, description="Request identifier for tracing")
+    client_version: Optional[str] = Field(default=None, max_length=15, description="Version of the client app")
+    device_fingerprint: Optional[str] = Field(default=None, max_length=100, description="Unique device fingerprint (optional)")
+
     model_config = ConfigDict(
         str_strip_whitespace=True,
-        extra="forbid",
+        extra="forbid"
     )
 
+    # -- Validators --
+    @field_validator("request_id")
+    @classmethod
+    def validate_request_id(cls, v: Optional[str]) -> Optional[str]:
+        if v and len(v) > 36:
+            raise ValueError("Request identifier is too long.")
+        return v
+
+    @field_validator("client_version")
+    @classmethod
+    def validate_client_version(cls, v: Optional[str]) -> Optional[str]:
+        # مثال: نیاز به فرمت X.Y.Z
+        if v and (len(v) > 15 or not re.match(r"^\d+\.\d+\.\d+$", v)):
+            raise ValueError("Invalid client version format. Expected format: X.Y.Z.")
+        return v
 
 
+# ---------------------------
+# CompleteVendorProfile
+# ---------------------------
 class CompleteVendorProfile(BaseRequestModel):
-    """Request model for completing a vendor profile."""
+    """
+    Request model for completing a vendor profile.
+    """
 
     temporary_token: str = Field(..., description="Temporary token from verify-otp")
     business_name: Optional[str] = Field(default=None, min_length=3, max_length=100, description="Business name")
@@ -48,10 +77,28 @@ class CompleteVendorProfile(BaseRequestModel):
     business_category_ids: Optional[List[str]] = Field(default_factory=list, description="Category IDs")
     visibility: Optional[str] = Field(default="COLLABORATIVE", description="Profile visibility status")
     vendor_type: Optional[str] = Field(default=None, description="Type of vendor")
-    preferred_languages: List[str] = Field(default_factory=list,
-                                           description="Preferred languages for the vendor profile")
+    preferred_languages: List[str] = Field(default_factory=list, description="Preferred languages for the vendor profile")
+
+    request_id: Optional[str] = Field(default=None, max_length=36, description="Request identifier for tracing")
+    client_version: Optional[str] = Field(default=None, max_length=15, description="Version of the client app")
+    device_fingerprint: Optional[str] = Field(default=None, max_length=100, description="Unique device fingerprint (optional)")
 
     model_config = ConfigDict(
         str_strip_whitespace=True,
-        extra="forbid",
+        extra="forbid"
     )
+
+    # -- Validators --
+    @field_validator("request_id")
+    @classmethod
+    def validate_request_id(cls, v: Optional[str]) -> Optional[str]:
+        if v and len(v) > 36:
+            raise ValueError("Request identifier is too long.")
+        return v
+
+    @field_validator("client_version")
+    @classmethod
+    def validate_client_version(cls, v: Optional[str]) -> Optional[str]:
+        if v and (len(v) > 15 or not re.match(r"^\d+\.\d+\.\d+$", v)):
+            raise ValueError("Invalid client version format. Expected format: X.Y.Z.")
+        return v

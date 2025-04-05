@@ -1,7 +1,10 @@
+# File: domain/auth/auth_services/otp_service/verify_otp_service.py
+
 import hashlib
+import os
 from uuid import uuid4
 from redis.asyncio import Redis
-from jose import jwt, ExpiredSignatureError
+from jose import jwt
 from fastapi import HTTPException
 
 from common.config.settings import settings
@@ -12,7 +15,7 @@ from common.security.jwt.payload_builder import build_jwt_payload
 from common.exceptions.base_exception import (
     InternalServerErrorException,
     BadRequestException,
-    UnauthorizedException
+    TooManyRequestsException
 )
 
 from infrastructure.database.mongodb.mongo_client import find_one, insert_one, update_one
@@ -21,6 +24,7 @@ from infrastructure.database.redis.operations.setex import setex
 from infrastructure.database.redis.operations.delete import delete
 from infrastructure.database.redis.operations.hset import hset
 from infrastructure.database.redis.operations.expire import expire
+from infrastructure.database.redis.operations.incr import incr
 from infrastructure.database.redis.operations.scan import scan_keys
 from infrastructure.database.redis.redis_client import get_redis_client
 
@@ -29,9 +33,15 @@ from domain.notification.notification_services.builder import build_notification
 from domain.notification.notification_services.dispatcher import dispatch_notification
 from domain.notification.entities.notification_entity import NotificationChannel
 
+MAX_OTP_ATTEMPTS = 5
+
+# Salt generator
+OTP_SALT = settings.OTP_SALT
+
 
 def hash_otp(otp: str) -> str:
-    return hashlib.sha256(otp.encode()).hexdigest()
+    salted = f"{OTP_SALT}:{otp}"
+    return hashlib.sha256(salted.encode()).hexdigest()
 
 
 async def delete_incomplete_sessions(user_id: str, redis: Redis):
@@ -47,7 +57,10 @@ async def verify_otp_service(
     temporary_token: str,
     client_ip: str,
     language: str = "fa",
-    redis: Redis = None
+    redis: Redis = None,
+    request_id: str = None,
+    client_version: str = None,
+    device_fingerprint: str = None
 ) -> dict:
     redis = redis or await get_redis_client()
 
@@ -56,9 +69,12 @@ async def verify_otp_service(
     except HTTPException as e:
         log_error("Token decode failed", extra={
             "error": e.detail,
-            "ip": client_ip
+            "ip": client_ip,
+            "request_id": request_id,
+            "client_version": client_version,
+            "device_fingerprint": device_fingerprint
         })
-        raise  # اجازه بده FastAPI همون status_code و detail رو بده بیرون
+        raise
 
     try:
         phone = payload.get("sub")
@@ -70,6 +86,8 @@ async def verify_otp_service(
 
         redis_key = f"otp:{role}:{phone}"
         temp_key = f"temp_token:{jti}"
+        attempt_key = f"otp-attempts:{role}:{phone}"
+
         stored_otp_hash = await get(redis_key, redis)
         stored_phone = await get(temp_key, redis)
 
@@ -77,17 +95,31 @@ async def verify_otp_service(
             raise BadRequestException(detail=get_message("otp.expired", language))
 
         if stored_phone != phone or hash_otp(otp) != stored_otp_hash:
+            attempts = await incr(attempt_key, redis)
+            await expire(attempt_key, 600, redis)
+
             log_error("Invalid OTP attempt", extra={
                 "submitted_otp": otp,
                 "hashed_submitted": hash_otp(otp),
                 "expected_hash": stored_otp_hash,
                 "phone": phone,
-                "ip": client_ip
+                "ip": client_ip,
+                "request_id": request_id,
+                "client_version": client_version,
+                "device_fingerprint": device_fingerprint,
+                "attempts": attempts
             })
+
+            if int(attempts) >= MAX_OTP_ATTEMPTS:
+                await delete(redis_key, redis)
+                await delete(temp_key, redis)
+                raise TooManyRequestsException(detail=get_message("otp.too_many.attempts", language))
+
             raise BadRequestException(detail=get_message("otp.invalid", language))
 
         await delete(redis_key, redis)
         await delete(temp_key, redis)
+        await delete(attempt_key, redis)
 
         collection = f"{role}s"
         user = await find_one(collection, {"phone": phone})
@@ -157,7 +189,8 @@ async def verify_otp_service(
                 "message": get_message(
                     "auth.profile.incomplete" if status == "incomplete" else "auth.profile.pending",
                     preferred_language
-                )
+                ),
+                "phone": phone
             }
 
         elif status == "active":
@@ -197,7 +230,7 @@ async def verify_otp_service(
             await hset(session_key, mapping={
                 "ip": client_ip,
                 "created_at": now.isoformat(),
-                "device": "unknown",
+                "device": device_fingerprint or "unknown",
                 "status": "active",
                 "jti": session_id
             }, redis=redis)
@@ -207,18 +240,22 @@ async def verify_otp_service(
                 "access_token": access_token,
                 "refresh_token": refresh_token,
                 "status": "active",
-                "message": get_message("otp.valid", preferred_language)
+                "message": get_message("otp.valid", preferred_language),
+                "phone": phone
             }
 
         raise InternalServerErrorException(detail=get_message("server.error", language))
 
     except HTTPException:
-        raise  # مجدد فقط همون رو پاس بده (نه اینکه با 500 بپوشونیمش)
+        raise
 
     except Exception as e:
         log_error("OTP verification failed", extra={
             "error": str(e),
             "ip": client_ip,
-            "endpoint": "/verify-otp"
+            "endpoint": "/verify-otp",
+            "request_id": request_id,
+            "client_version": client_version,
+            "device_fingerprint": device_fingerprint
         }, exc_info=True)
         raise InternalServerErrorException(detail=get_message("server.error", language))

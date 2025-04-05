@@ -1,6 +1,6 @@
 # File: src/application/auth/otp/request_otp.py
 
-from fastapi import APIRouter, Request, status, Depends
+from fastapi import APIRouter, Request, status, Depends, HTTPException
 from redis.asyncio import Redis
 from typing import Annotated
 
@@ -42,7 +42,10 @@ async def request_otp_endpoint(
             "role": data.role,
             "purpose": data.purpose,
             "ip": extract_client_ip(request),
-            "endpoint": "/request-otp"
+            "endpoint": "/request-otp",
+            "client_version": data.client_version,
+            "device_fingerprint": data.device_fingerprint,
+            "request_id": data.request_id
         })
 
         return StandardResponse(
@@ -57,15 +60,18 @@ async def request_otp_endpoint(
             }
         )
 
-    except BadRequestException as e:
-        log_error("Bad request in /request-otp", extra={
-            "error": str(e.detail),
+    except HTTPException as http_exc:
+        log_error("Handled HTTPException in /request-otp", extra={
+            "error": str(http_exc.detail),
             "phone": data.phone,
             "role": data.role,
             "ip": extract_client_ip(request),
-            "endpoint": "/request-otp"
+            "endpoint": "/request-otp",
+            "client_version": data.client_version,
+            "device_fingerprint": data.device_fingerprint,
+            "request_id": data.request_id
         })
-        raise
+        raise http_exc
 
     except Exception as e:
         log_error("Internal server error in /request-otp", extra={
@@ -73,6 +79,9 @@ async def request_otp_endpoint(
             "phone": data.phone,
             "role": data.role,
             "ip": extract_client_ip(request),
-            "endpoint": "/request-otp"
+            "endpoint": "/request-otp",
+            "client_version": data.client_version,
+            "device_fingerprint": data.device_fingerprint,
+            "request_id": data.request_id
         }, exc_info=True)
         raise InternalServerErrorException(detail=get_message("server.error", data.response_language))

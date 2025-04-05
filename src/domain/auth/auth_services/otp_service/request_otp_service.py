@@ -2,7 +2,7 @@
 
 import os
 import hashlib
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from uuid import uuid4
 from redis.asyncio import Redis
 from jose import jwt
@@ -30,10 +30,13 @@ from domain.notification.entities.notification_entity import NotificationChannel
 OTP_EXPIRY = 300
 BLOCK_DURATION = 3600
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+OTP_SALT = settings.OTP_SALT
 
 
 def hash_otp(otp: str) -> str:
-    return hashlib.sha256(otp.encode()).hexdigest()
+    salted = f"{OTP_SALT}:{otp}"
+    return hashlib.sha256(salted.encode()).hexdigest()
+
 
 
 async def check_rate_limits(phone: str, role: str, redis: Redis, language: str):
@@ -88,7 +91,10 @@ async def request_otp_service(
     purpose: str,
     request: Request,
     language: str = "fa",
-    redis: Redis = None
+    redis: Redis = None,
+    request_id: str = None,
+    client_version: str = None,
+    device_fingerprint: str = None
 ) -> dict:
     try:
         redis = redis or await get_redis_client()
@@ -130,7 +136,10 @@ async def request_otp_service(
             "jti": jti,
             "ip": client_ip,
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "endpoint": "request_otp_service"
+            "endpoint": "request_otp_service",
+            "request_id": request_id,
+            "client_version": client_version,
+            "device_fingerprint": device_fingerprint
         }
         if ENVIRONMENT == "development":
             log_data["otp"] = otp_code
@@ -152,6 +161,9 @@ async def request_otp_service(
             "phone": phone,
             "role": role,
             "ip": extract_client_ip(request),
-            "endpoint": "request_otp_service"
+            "endpoint": "request_otp_service",
+            "request_id": request_id,
+            "client_version": client_version,
+            "device_fingerprint": device_fingerprint
         }, exc_info=True)
         raise InternalServerErrorException(detail=get_message("server.error", lang=language))

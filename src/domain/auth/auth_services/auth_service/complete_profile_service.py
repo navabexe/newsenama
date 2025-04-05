@@ -7,7 +7,7 @@ from redis.asyncio import Redis
 from fastapi import HTTPException, Request
 
 from common.translations.messages import get_message
-from common.logging.logger import log_error
+from common.logging.logger import log_error, log_info
 from common.exceptions.base_exception import (
     BadRequestException, ForbiddenException, InternalServerErrorException, UnauthorizedException
 )
@@ -149,6 +149,7 @@ async def complete_profile_service(
         profile_data = profile_model(**updated_user).model_dump()
         token_lang = (languages or [language])[0]
         client_ip = extract_client_ip(request)
+        device = getattr(request, 'device_fingerprint', "unknown")
 
         access_token = await generate_access_token(
             user_id=user_id,
@@ -167,11 +168,20 @@ async def complete_profile_service(
             await hset(session_key, {
                 "ip": client_ip,
                 "created_at": datetime.now(timezone.utc).isoformat(),
-                "device": "unknown",
+                "device": device,
                 "status": "active",
                 "jti": session_id
             }, redis=redis)
             await expire(session_key, 86400, redis=redis)
+
+        log_info("Profile completed", extra={
+            "user_id": user_id,
+            "role": role,
+            "status": updated_user["status"],
+            "ip": client_ip,
+            "session_id": session_id,
+            "device": device
+        })
 
         try:
             if role == "vendor" and updated_user["status"] == "pending":

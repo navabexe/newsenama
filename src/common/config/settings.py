@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     SSL_CERT_FILE: str
     SSL_KEY_FILE: str
 
+    # OTP
+    OTP_SALT: str = Field("default_salt", description="Salt value used for hashing OTP codes")
+
     class Config:
         env_file = ENV_PATH
         env_file_encoding = "utf-8"

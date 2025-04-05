@@ -9,11 +9,7 @@ from common.schemas.request_base import BaseRequestModel
 from common.schemas.standard_response import StandardResponse, Meta
 from common.translations.messages import get_message
 from common.logging.logger import log_info, log_error
-from common.exceptions.base_exception import (
-    BadRequestException,
-    InternalServerErrorException,
-    UnauthorizedException
-)
+from common.exceptions.base_exception import InternalServerErrorException
 from common.utils.ip_utils import extract_client_ip
 
 from infrastructure.database.redis.redis_client import get_redis_client
@@ -21,16 +17,17 @@ from domain.auth.auth_services.otp_service.verify_otp_service import verify_otp_
 
 router = APIRouter()
 
-
 class VerifyOTPModel(BaseRequestModel):
     otp: Annotated[str, Field(min_length=4, max_length=10, description="One-time password")]
     temporary_token: Annotated[str, Field(description="Temporary token issued with OTP")]
+    request_id: Annotated[str | None, Field(default=None, description="Request identifier for tracing")]
+    client_version: Annotated[str | None, Field(default=None, description="Version of the client app")]
+    device_fingerprint: Annotated[str | None, Field(default=None, description="Device fingerprint")]
 
     model_config = {
         "str_strip_whitespace": True,
-        "extra": "allow",  # ← اجازه به request_id و client_version و response_language
+        "extra": "allow",
     }
-
 
 @router.post(
     "/verify-otp",
@@ -59,7 +56,10 @@ async def verify_otp_endpoint(
         log_info("OTP verified", extra={
             "phone": result.get("phone"),
             "ip": client_ip,
-            "endpoint": "/verify-otp"
+            "endpoint": "/verify-otp",
+            "request_id": data.request_id,
+            "client_version": data.client_version,
+            "device_fingerprint": data.device_fingerprint
         })
 
         return StandardResponse(
@@ -72,11 +72,13 @@ async def verify_otp_endpoint(
         )
 
     except HTTPException as http_exc:
-        # خطاهای JWT یا 400/401 که خود verify_otp_service انداخته
         log_error("Handled error in /verify-otp", extra={
             "error": str(http_exc.detail),
             "ip": client_ip,
-            "endpoint": "/verify-otp"
+            "endpoint": "/verify-otp",
+            "request_id": data.request_id,
+            "client_version": data.client_version,
+            "device_fingerprint": data.device_fingerprint
         })
         raise http_exc
 
@@ -84,6 +86,9 @@ async def verify_otp_endpoint(
         log_error("Internal server error in /verify-otp", extra={
             "error": str(e),
             "ip": client_ip,
-            "endpoint": "/verify-otp"
+            "endpoint": "/verify-otp",
+            "request_id": data.request_id,
+            "client_version": data.client_version,
+            "device_fingerprint": data.device_fingerprint
         }, exc_info=True)
         raise InternalServerErrorException(detail=get_message("server.error", language))

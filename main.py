@@ -8,6 +8,7 @@ from fastapi.responses import RedirectResponse, PlainTextResponse
 from starlette.responses import JSONResponse
 
 from application.router.all_endpoints import all_routers
+from common.exceptions.exception_handlers import register_exception_handlers
 
 from common.logging.logger import log_info, log_error
 from infrastructure.database.mongodb.connection import MongoDBConnection
@@ -62,18 +63,7 @@ app.add_middleware(
 )
 
 
-# Global exception handler
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    log_error("Unhandled exception", extra={
-        "path": request.url.path,
-        "method": request.method,
-        "error": str(exc)
-    })
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error"},
-    )
+register_exception_handlers(app)
 
 
 # Include API routers

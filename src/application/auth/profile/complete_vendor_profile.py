@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Request, status, Depends
+# File: complete_vendor_profile.py
+
+from fastapi import APIRouter, Request, status, Depends, HTTPException
 from redis.asyncio import Redis
 from typing import Annotated
 
@@ -8,12 +10,14 @@ from infrastructure.database.redis.redis_client import get_redis_client
 
 from common.schemas.standard_response import StandardResponse, Meta
 from common.translations.messages import get_message
-from common.exceptions.base_exception import BadRequestException, InternalServerErrorException
 from common.logging.logger import log_info, log_error
 from common.utils.ip_utils import extract_client_ip
+from common.exceptions.base_exception import (
+    BadRequestException,
+    InternalServerErrorException,
+)
 
 router = APIRouter()
-
 
 @router.post(
     "/complete-vendor-profile",
@@ -51,23 +55,33 @@ async def complete_vendor_profile(
         log_info("Vendor profile completed", extra={
             "vendor": data.business_name,
             "ip": client_ip,
-            "endpoint": "/complete-vendor-profile"
+            "endpoint": "/complete-vendor-profile",
+            "request_id": data.request_id,
+            "client_version": data.client_version,
+            "device_fingerprint": data.device_fingerprint
         })
 
         return StandardResponse(**result)
 
-    except BadRequestException as e:
-        log_error("Validation error in vendor profile", extra={
-            "error": str(e.detail),
+    except HTTPException as http_exc:
+        # تمام استثناءهای مشتق از HTTPException، مثل Unauthorized, BadRequest, ...
+        log_error("Handled HTTPException in vendor profile", extra={
+            "error": str(http_exc.detail),
             "ip": client_ip,
-            "endpoint": "/complete-vendor-profile"
+            "endpoint": "/complete-vendor-profile",
+            "request_id": data.request_id,
+            "client_version": data.client_version,
+            "device_fingerprint": data.device_fingerprint
         })
-        raise
+        raise http_exc
 
     except Exception as e:
         log_error("Unexpected error in vendor profile", extra={
             "error": str(e),
             "ip": client_ip,
-            "endpoint": "/complete-vendor-profile"
+            "endpoint": "/complete-vendor-profile",
+            "request_id": data.request_id,
+            "client_version": data.client_version,
+            "device_fingerprint": data.device_fingerprint
         }, exc_info=True)
         raise InternalServerErrorException(detail=get_message("server.error", data.response_language))
