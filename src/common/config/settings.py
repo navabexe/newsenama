@@ -9,7 +9,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 ENV_PATH = BASE_DIR / ".env"
 ENVIRONMENT: str = "development"  # "production" or "development"
 
-
 class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
 
@@ -20,6 +19,7 @@ class Settings(BaseSettings):
     ACCESS_SECRET: str = Field(..., description="Secret for access tokens")
     REFRESH_SECRET: str = Field(..., description="Secret for refresh tokens")
     SMS_PANEL_KEY: str = Field(..., description="API key for SMS provider")
+    OTP_SALT: str = Field(..., description="Salt value used for hashing OTP codes")
 
     # Token expiration & algorithms
     ACCESS_TOKEN_EXPIRE_MINUTES: int
@@ -55,14 +55,13 @@ class Settings(BaseSettings):
     SSL_CERT_FILE: str
     SSL_KEY_FILE: str
 
-    # OTP
-    OTP_SALT: str = Field("default_salt", description="Salt value used for hashing OTP codes")
+    # IPinfo
+    IPINFO_TOKEN: str = Field(..., description="API token for ipinfo.io to fetch geolocation data")
 
     class Config:
         env_file = ENV_PATH
         env_file_encoding = "utf-8"
         case_sensitive = True
-
 
 # Singleton settings instance
 settings = Settings()

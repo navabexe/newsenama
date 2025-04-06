@@ -1,7 +1,6 @@
 # File: domain/auth/auth_services/otp_service/verify_otp_service.py
 
 import hashlib
-import os
 from uuid import uuid4
 from redis.asyncio import Redis
 from jose import jwt
@@ -12,12 +11,13 @@ from common.logging.logger import log_error, log_info
 from common.translations.messages import get_message
 from common.security.jwt.decode import decode_token
 from common.security.jwt.payload_builder import build_jwt_payload
-from common.security.jwt.tokens import generate_access_token, generate_refresh_token
+from common.security.jwt.tokens import generate_access_token
 from common.exceptions.base_exception import (
     InternalServerErrorException,
     BadRequestException,
     TooManyRequestsException
 )
+from domain.auth.auth_services.session_service.get_sessions_service import decode_value
 from domain.auth.entities.token_entity import VendorJWTProfile
 
 from infrastructure.database.mongodb.mongo_client import find_one, insert_one, update_one
@@ -31,25 +31,28 @@ from infrastructure.database.redis.operations.scan import scan_keys
 from infrastructure.database.redis.redis_client import get_redis_client
 
 from common.utils.date_utils import utc_now
+from common.utils.ip_utils import get_location_from_ip
 from domain.notification.notification_services.builder import build_notification_content
 from domain.notification.notification_services.dispatcher import dispatch_notification
 from domain.notification.entities.notification_entity import NotificationChannel
 
 MAX_OTP_ATTEMPTS = 5
 BLOCK_DURATION = 600  # 10 minutes
-
+IPINFO_TOKEN = settings.IPINFO_TOKEN
 OTP_SALT = settings.OTP_SALT
 
 def hash_otp(otp: str) -> str:
-    salted = f"{OTP_SALT}:{otp}"
+    salted = f"{settings.OTP_SALT}:{otp}"
     return hashlib.sha256(salted.encode()).hexdigest()
 
 async def delete_incomplete_sessions(user_id: str, redis: Redis):
     session_keys = await scan_keys(redis, f"sessions:{user_id}:*")
     for key in session_keys:
         session_data = await redis.hgetall(key)
-        if session_data.get(b"status", b"").decode() != "active":
+        status = session_data.get(b"status") or session_data.get("status", b"")
+        if decode_value(status) != "active":
             await redis.delete(key)
+            log_info("Deleted incomplete session", extra={"user_id": user_id, "session_key": key})
 
 async def log_audit(action: str, details: dict):
     await insert_one("audit_logs", {
@@ -80,14 +83,15 @@ async def send_otp_verified_notification(phone: str, role: str, language: str):
         return False
 
 async def verify_otp_service(
-    otp: str,
-    temporary_token: str,
-    client_ip: str,
-    language: str = "fa",
-    redis: Redis = None,
-    request_id: str = None,
-    client_version: str = None,
-    device_fingerprint: str = None
+        otp: str,
+        temporary_token: str,
+        client_ip: str,
+        language: str = "fa",
+        redis: Redis = None,
+        request_id: str = None,
+        client_version: str = None,
+        device_fingerprint: str = None,
+        user_agent: str = "Unknown"
 ) -> dict:
     redis = redis or await get_redis_client()
 
@@ -222,10 +226,27 @@ async def verify_otp_service(
         elif status == "active":
             await delete_incomplete_sessions(user_id, redis)
             session_id = str(uuid4())
-
-            # Fetch full vendor profile for active vendors
             updated_user = await find_one(collection, {"_id": user["_id"]})
             profile_data = VendorJWTProfile(**updated_user).model_dump() if role == "vendor" else None
+
+            location = await get_location_from_ip(client_ip)
+
+            session_data = {
+                b"ip": client_ip.encode(),
+                b"created_at": now.isoformat().encode(),
+                b"last_seen_at": now.isoformat().encode(),
+                b"device_name": b"Unknown Device",
+                b"device_type": b"Desktop",
+                b"os": b"Windows",
+                b"browser": b"Chrome",
+                b"user_agent": user_agent.encode(),
+                b"location": location.encode(),
+                b"status": b"active",
+                b"jti": session_id.encode()
+            }
+            session_key = f"sessions:{user_id}:{session_id}"
+            await hset(session_key, mapping=session_data, redis=redis)
+            await expire(session_key, 86400, redis)
 
             access_token = await generate_access_token(
                 user_id=user_id,
@@ -255,16 +276,6 @@ async def verify_otp_service(
                 redis
             )
 
-            session_key = f"sessions:{user_id}:{session_id}"
-            await hset(session_key, mapping={
-                "ip": client_ip,
-                "created_at": now.isoformat(),
-                "device": device_fingerprint or "unknown",
-                "status": "active",
-                "jti": session_id
-            }, redis=redis)
-            await expire(session_key, 86400, redis)
-
             await log_audit("otp_verified_active", {
                 "user_id": user_id,
                 "phone": phone,
@@ -273,7 +284,8 @@ async def verify_otp_service(
                 "ip": client_ip,
                 "request_id": request_id,
                 "client_version": client_version,
-                "device_fingerprint": device_fingerprint
+                "device_fingerprint": device_fingerprint,
+                "location": location
             })
 
             return {

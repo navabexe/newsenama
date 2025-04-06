@@ -41,19 +41,21 @@ async def verify_otp_endpoint(
     request: Request,
     redis: Annotated[Redis, Depends(get_redis_client)]
 ):
-    client_ip = extract_client_ip(request)
+    client_ip = request.headers.get("X-Forwarded-For", await extract_client_ip(request))  # await اضافه شده
     language = getattr(data, "response_language", "fa")
+    user_agent = request.headers.get("User-Agent", "Unknown")
 
     try:
         result = await verify_otp_service(
             otp=data.otp,
             temporary_token=data.temporary_token,
-            client_ip=client_ip,
+            client_ip=client_ip,  # حالا یه str هست
             language=language,
             redis=redis,
             request_id=data.request_id,
             client_version=data.client_version,
-            device_fingerprint=data.device_fingerprint
+            device_fingerprint=data.device_fingerprint,
+            user_agent=user_agent
         )
 
         log_info("OTP verified", extra={
@@ -62,7 +64,8 @@ async def verify_otp_endpoint(
             "endpoint": "/verify-otp",
             "request_id": data.request_id,
             "client_version": data.client_version,
-            "device_fingerprint": data.device_fingerprint
+            "device_fingerprint": data.device_fingerprint,
+            "user_agent": user_agent
         })
 
         return StandardResponse(

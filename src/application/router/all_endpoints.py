@@ -3,12 +3,12 @@ from fastapi import APIRouter
 
 from application.auth.auth import (
     request_account_deletion,
-    sessions,
     login,
     refresh_token,
     logout,
     force_logout
 )
+from application.auth.sessions import sessions
 from application.auth.admin import approve_vendor
 from application.auth.profile import (
     complete_user_profile,

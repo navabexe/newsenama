@@ -28,6 +28,7 @@ async def request_otp_endpoint(
     redis: Annotated[Redis, Depends(get_redis_client)]
 ):
     try:
+        client_ip = await extract_client_ip(request)  # await اضافه شده
         result = await request_otp_service(
             phone=data.phone,
             role=data.role,
@@ -44,7 +45,7 @@ async def request_otp_endpoint(
             "phone": data.phone,
             "role": data.role,
             "purpose": data.purpose,
-            "ip": extract_client_ip(request),
+            "ip": client_ip,  # حالا یه str هست
             "endpoint": "/request-otp",
             "client_version": data.client_version,
             "device_fingerprint": data.device_fingerprint,
@@ -65,11 +66,12 @@ async def request_otp_endpoint(
         )
 
     except HTTPException as http_exc:
+        client_ip = await extract_client_ip(request)  # await اضافه شده
         log_error("Handled HTTPException in /request-otp", extra={
             "error": str(http_exc.detail),
             "phone": data.phone,
             "role": data.role,
-            "ip": extract_client_ip(request),
+            "ip": client_ip,
             "endpoint": "/request-otp",
             "client_version": data.client_version,
             "device_fingerprint": data.device_fingerprint,
@@ -78,11 +80,12 @@ async def request_otp_endpoint(
         raise http_exc
 
     except Exception as e:
+        client_ip = await extract_client_ip(request)  # await اضافه شده
         log_error("Internal server error in /request-otp", extra={
             "error": str(e),
             "phone": data.phone,
             "role": data.role,
-            "ip": extract_client_ip(request),
+            "ip": client_ip,
             "endpoint": "/request-otp",
             "client_version": data.client_version,
             "device_fingerprint": data.device_fingerprint,

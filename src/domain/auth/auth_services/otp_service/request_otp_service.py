@@ -99,7 +99,7 @@ async def request_otp_service(
 ) -> dict:
     try:
         redis = redis or await get_redis_client()
-        client_ip = extract_client_ip(request)
+        client_ip = await extract_client_ip(request)  # await شده
 
         redis_key = f"otp:{role}:{phone}"
         block_key = f"otp-blocked:{role}:{phone}"
@@ -124,7 +124,7 @@ async def request_otp_service(
             jti=jti,
             expires_in=OTP_EXPIRY
         )
-        temp_token = jwt.encode(payload, settings.ACCESS_SECRET, algorithm=settings.ALGORITHM)  # Changed to ACCESS_SECRET
+        temp_token = jwt.encode(payload, settings.ACCESS_SECRET, algorithm=settings.ALGORITHM)
 
         await setex(redis_key, OTP_EXPIRY, otp_hash, redis)
         await setex(f"temp_token:{jti}", OTP_EXPIRY, phone, redis)
@@ -135,7 +135,7 @@ async def request_otp_service(
             "role": role,
             "purpose": purpose,
             "jti": jti,
-            "ip": client_ip,
+            "ip": client_ip,  # حالا یه str هست
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "endpoint": "request_otp_service",
             "request_id": request_id,
@@ -163,7 +163,7 @@ async def request_otp_service(
             "error": str(e),
             "phone": phone,
             "role": role,
-            "ip": extract_client_ip(request),
+            "ip": await extract_client_ip(request),  # await اضافه شده
             "endpoint": "request_otp_service",
             "request_id": request_id,
             "client_version": client_version,

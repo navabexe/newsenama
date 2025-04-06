@@ -219,6 +219,18 @@ MESSAGES = {
     "vendor.invalid_action": {
         "fa": "عملیات نامعتبر است",
         "en": "Invalid action"
+    },
+    "sessions.checked": {
+        "fa": {"title": "بررسی جلسات",
+               "body": "جلسات شما در {time} از IP {ip} با دستگاه {device} بررسی شد. تعداد: {count}"},
+        "en": {"title": "Sessions Checked",
+               "body": "Your sessions were checked at {time} from IP {ip} with device {device}. Count: {count}"}
+    },
+    "sessions.danger": {
+        "fa": {"title": "هشدار امنیتی",
+               "body": "فعالیت مشکوک برای کاربر {user_id} از IP {ip} با {count} جلسه و {ip_count} آدرس IP"},
+        "en": {"title": "Security Alert",
+               "body": "Suspicious activity for user {user_id} from IP {ip} with {count} sessions and {ip_count} IPs"}
     }
 
 }
