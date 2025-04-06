@@ -5,8 +5,8 @@ from typing import Optional, Literal
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 import re
 
-from common.validators.phone import validate_and_format_phone
-from common.translations.messages import get_message
+from common.validators.validators import validate_and_format_phone
+
 
 class RequestOTPInput(BaseModel):
     """Request model for requesting an OTP code."""

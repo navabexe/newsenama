@@ -30,7 +30,7 @@ async def dispatch_notification(
             sent_at=datetime.now(UTC).isoformat()
         )
 
-        notification_id = await insert_one("notifications", notification.dict(exclude_none=True))
+        notification_id = await insert_one("notifications", notification.model_dump(exclude_none=True))
         notification.id = str(notification_id)
 
         await insert_one("audit_logs", {
