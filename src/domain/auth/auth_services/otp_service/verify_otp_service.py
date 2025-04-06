@@ -1,6 +1,7 @@
 # File: domain/auth/auth_services/otp_service/verify_otp_service.py
 
 import hashlib
+from os import access
 from uuid import uuid4
 from redis.asyncio import Redis
 from jose import jwt
@@ -36,8 +37,8 @@ from domain.notification.notification_services.builder import build_notification
 from domain.notification.notification_services.dispatcher import dispatch_notification
 from domain.notification.entities.notification_entity import NotificationChannel
 
-MAX_OTP_ATTEMPTS = 5
-BLOCK_DURATION = 600  # 10 minutes
+MAX_OTP_ATTEMPTS = settings.MAX_OTP_ATTEMPTS
+BLOCK_DURATION_OTP = settings.BLOCK_DURATION_OTP  # 10 minutes
 IPINFO_TOKEN = settings.IPINFO_TOKEN
 OTP_SALT = settings.OTP_SALT
 
@@ -132,6 +133,7 @@ async def verify_otp_service(
         if stored_phone != phone or hash_otp(otp) != stored_otp_hash:
             attempts = await incr(attempt_key, redis)
             await expire(attempt_key, 600, redis)
+            remaining_attempts = MAX_OTP_ATTEMPTS - int(attempts)
 
             log_error("Invalid OTP attempt", extra={
                 "submitted_otp": otp,
@@ -142,16 +144,21 @@ async def verify_otp_service(
                 "request_id": request_id,
                 "client_version": client_version,
                 "device_fingerprint": device_fingerprint,
-                "attempts": attempts
+                "attempts": attempts,
+                "remaining_attempts": remaining_attempts
             })
 
             if int(attempts) >= MAX_OTP_ATTEMPTS:
                 await delete(redis_key, redis)
                 await delete(temp_key, redis)
-                await setex(block_key, BLOCK_DURATION, "1", redis)
+                await setex(block_key, BLOCK_DURATION_OTP, "1", redis)
                 raise TooManyRequestsException(detail=get_message("otp.too_many.attempts", language))
 
-            raise BadRequestException(detail=get_message("otp.invalid", language))
+            raise BadRequestException(detail=get_message(
+                "otp.invalid.with_attempts",
+                language,
+                variables={"remaining": remaining_attempts}
+            ))
 
         await delete(redis_key, redis)
         await delete(temp_key, redis)

@@ -8,7 +8,7 @@ from redis.asyncio import Redis
 from common.schemas.request_base import BaseRequestModel
 from common.schemas.standard_response import StandardResponse, Meta
 from common.translations.messages import get_message
-from domain.auth.auth_services.profile.complete_profile_service import complete_profile_service
+from domain.auth.auth_services.profile_service.complete_profile_service import complete_profile_service
 from infrastructure.database.redis.redis_client import get_redis_client
 
 from common.exceptions.base_exception import (

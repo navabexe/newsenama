@@ -1,9 +1,14 @@
-# 📄 common/translations/messages.py
+#  common/translations/messages.py
+from typing import Dict, Optional, Literal
 
 MESSAGES = {
     "otp.invalid": {
         "fa": "کد تایید اشتباه است.",
         "en": "The OTP code is incorrect."
+    },
+    "otp.invalid.with_attempts": {
+        "fa": "کد واردشده اشتباه است. {remaining} تلاش باقی مانده است.",
+        "en": "The entered code is incorrect. {remaining} attempts left."
     },
     "otp.expired": {
         "fa": "کد تایید منقضی شده است.",
@@ -18,7 +23,7 @@ MESSAGES = {
         "en": "Too many OTP requests in 1 minute."
     },
     "otp.too_many.10min": {
-        "fa": "تعداد درخواست در ۱۰ دقیقه زیاد است.",
+        "fa": "تعداد درخواست در ۱۰ دقیقه زیاد است。",
         "en": "Too many OTP requests in 10 minutes."
     },
     "otp.too_many.blocked": {
@@ -149,7 +154,6 @@ MESSAGES = {
         "fa": "کد تایید برای شماره {phone} با موفقیت تأیید شد.",
         "en": "OTP for {phone} has been successfully verified."
     },
-    # Title & body for successful user profile completion
     "notification.user.profile_completed.title": {
         "fa": "پروفایل شما با موفقیت تکمیل شد",
         "en": "Your profile has been successfully completed"
@@ -158,8 +162,6 @@ MESSAGES = {
         "fa": "از اینکه اطلاعات خود را تکمیل کردید سپاسگزاریم.",
         "en": "Thank you for completing your profile."
     },
-
-    # Title & body for vendor profile submission (pending approval)
     "notification.vendor.profile_pending.title": {
         "fa": "پروفایل در انتظار تایید",
         "en": "Vendor Profile Pending"
@@ -232,19 +234,24 @@ MESSAGES = {
         "en": {"title": "Security Alert",
                "body": "Suspicious activity for user {user_id} from IP {ip} with {count} sessions and {ip_count} IPs"}
     }
-
 }
 
-
-def get_message(key: str, lang: str = "fa") -> str:
+def get_message(key: str, lang: Literal["fa", "en"] = "fa", variables: Optional[Dict[str, int | str]] = None) -> str | None:
     """
-    Retrieve a localized message based on key and language.
+    Retrieve a localized message based on key and language, with optional variable substitution.
 
     Args:
         key (str): Message key (e.g., 'otp.invalid')
-        lang (str): Language code ('fa' or 'en')
+        lang (Literal["fa", "en"]): Language code ('fa' or 'en')
+        variables (Optional[Dict[str, int | str]]): Variables to substitute in the message
 
     Returns:
         str: Localized message or key as fallback
     """
-    return MESSAGES.get(key, {}).get(lang) or MESSAGES.get(key, {}).get("en") or key
+    message = MESSAGES.get(key, {}).get(lang) or MESSAGES.get(key, {}).get("en") or key
+    if variables and isinstance(message, str):
+        try:
+            return message.format(**variables)
+        except (KeyError, ValueError):
+            return message
+    return message

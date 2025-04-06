@@ -22,40 +22,44 @@ class Settings(BaseSettings):
     OTP_SALT: str = Field(..., description="Salt value used for hashing OTP codes")
 
     # Token expiration & algorithms
-    ACCESS_TOKEN_EXPIRE_MINUTES: int
-    ALGORITHM: str
-    TEMP_TOKEN_TTL: int
-    ACCESS_TTL: int
-    REFRESH_TTL: int
-    REFRESH_TOKEN_EXPIRE_DAYS: int
-    TEMP_TOKEN_EXPIRE_MINUTES: int
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(60, description="Access token expiry in minutes")
+    ALGORITHM: str = Field("HS256", description="JWT signing algorithm")
+    TEMP_TOKEN_TTL: int = Field(300, description="Temporary token TTL in seconds")
+    ACCESS_TTL: int = Field(900, description="Access token TTL in seconds")
+    REFRESH_TTL: int = Field(86400, description="Refresh token TTL in seconds")
+    REFRESH_TOKEN_EXPIRE_DAYS: int = Field(30, description="Refresh token expiry in days")
+    TEMP_TOKEN_EXPIRE_MINUTES: int = Field(300, description="Temporary token expiry in minutes")
+    OTP_EXPIRY: int = Field(300, description="OTP expiry time in seconds")
+    BLOCK_DURATION: int = Field(3600, description="General block duration in seconds")
+    MAX_OTP_ATTEMPTS: int = Field(5, description="Maximum OTP attempts allowed")
+    BLOCK_DURATION_OTP: int = Field(600, description="OTP block duration in seconds")
 
     # MongoDB
-    MONGO_URI: str
-    MONGO_DB: str
-    MONGO_TIMEOUT: int
+    MONGO_URI: str = Field("mongodb://localhost:27017", description="MongoDB connection URI")
+    MONGO_DB: str = Field("senama_db", description="MongoDB database name")
+    MONGO_TIMEOUT: int = Field(5000, description="MongoDB connection timeout in milliseconds")
 
     # SMS
-    MOCK_SMS: bool
+    MOCK_SMS: bool = Field(True, description="Mock SMS sending for testing")
 
     # Admin credentials
-    ADMIN_USERNAME: str
-    ADMIN_PASSWORD: str
+    ADMIN_USERNAME: str = Field(..., description="Admin username")
+    ADMIN_PASSWORD: str = Field(..., description="Admin password")
 
     # Redis
-    REDIS_HOST: str
-    REDIS_PORT: int
-    REDIS_DB: int
-    REDIS_SSL_CA_CERTS: str
-    REDIS_SSL_CERT: str
-    REDIS_SSL_KEY: str
-    REDIS_USE_SSL: str
+    REDIS_HOST: str = Field("localhost", description="Redis host")
+    REDIS_PORT: int = Field(6379, description="Redis port")
+    REDIS_DB: int = Field(0, description="Redis database number")
+    REDIS_SSL_CA_CERTS: str = Field("", description="Path to Redis SSL CA certificate")
+    REDIS_SSL_CERT: str = Field("", description="Path to Redis SSL certificate")
+    REDIS_SSL_KEY: str = Field("", description="Path to Redis SSL key")
+    REDIS_USE_SSL: bool = Field(False, description="Use SSL for Redis connection")
 
     # SSL
-    SSL_CERT_FILE: str
-    SSL_KEY_FILE: str
+    SSL_CERT_FILE: str = Field("", description="Path to HTTPS certificate file")
+    SSL_KEY_FILE: str = Field("", description="Path to HTTPS key file")
 
-    # IPinfo
+    # IP info
     IPINFO_TOKEN: str = Field(..., description="API token for ipinfo.io to fetch geolocation data")
 
     class Config:

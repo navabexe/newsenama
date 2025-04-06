@@ -31,7 +31,7 @@ async def init_redis_pool() -> ConnectionPool:
             connection_kwargs["password"] = redis_password
             log_info("Using Redis with password", extra={"host": settings.REDIS_HOST})
 
-        if settings.REDIS_USE_SSL.lower() == "true":
+        if settings.REDIS_USE_SSL:  # تغییر به استفاده مستقیم از مقدار بولی
             ssl_context = ssl.create_default_context(cafile=settings.REDIS_SSL_CA_CERTS)
             ssl_context.load_cert_chain(certfile=settings.REDIS_SSL_CERT, keyfile=settings.REDIS_SSL_KEY)
             connection_kwargs["ssl_context"] = ssl_context
@@ -44,7 +44,12 @@ async def init_redis_pool() -> ConnectionPool:
 
         redis_client = Redis(connection_pool=redis_pool)
         await redis_client.ping()
-        log_info("Redis connection established", extra={"host": settings.REDIS_HOST, "ssl": settings.REDIS_USE_SSL})
+        log_info("Redis connection established", extra={
+            "host": settings.REDIS_HOST,
+            "port": settings.REDIS_PORT,
+            "db": settings.REDIS_DB,
+            "ssl": settings.REDIS_USE_SSL
+        })
 
     except RedisError as e:
         log_error("Redis connection failed", extra={"error": str(e), "host": settings.REDIS_HOST}, exc_info=True)

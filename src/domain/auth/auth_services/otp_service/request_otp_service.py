@@ -27,8 +27,8 @@ from domain.notification.notification_services.builder import build_notification
 from domain.notification.notification_services.dispatcher import dispatch_notification
 from domain.notification.entities.notification_entity import NotificationChannel
 
-OTP_EXPIRY = 300
-BLOCK_DURATION = 3600
+OTP_EXPIRY = settings.OTP_EXPIRY
+BLOCK_DURATION = settings.BLOCK_DURATION
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 OTP_SALT = settings.OTP_SALT
 

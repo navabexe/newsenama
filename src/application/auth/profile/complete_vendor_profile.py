@@ -4,7 +4,7 @@ from fastapi import APIRouter, Request, status, Depends, HTTPException
 from redis.asyncio import Redis
 from typing import Annotated
 
-from domain.auth.auth_services.profile.complete_profile_service import complete_profile_service
+from domain.auth.auth_services.profile_service.complete_profile_service import complete_profile_service
 from domain.auth.entities.auth_models import CompleteVendorProfile
 from infrastructure.database.redis.redis_client import get_redis_client
 
