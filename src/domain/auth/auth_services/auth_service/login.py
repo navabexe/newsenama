@@ -7,7 +7,7 @@ from typing import Dict, Optional
 from redis.asyncio import Redis
 
 from common.logging.logger import log_info, log_error
-from common.security.jwt.tokens import generate_access_token, generate_refresh_token
+from common.security.jwt_handler import generate_access_token, generate_refresh_token
 from common.security.password import verify_password
 from common.security.permissions_loader import get_scopes_for_role
 from common.translations.messages import get_message

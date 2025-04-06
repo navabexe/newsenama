@@ -5,6 +5,7 @@ from pydantic import Field
 from typing import Annotated, Literal, Optional
 from redis.asyncio import Redis
 
+from common.security.jwt_handler import get_current_user
 from domain.notification.entities.notification_entity import NotificationChannel
 from domain.notification.notification_services.notification_service import notification_service
 from common.schemas.request_base import BaseRequestModel
@@ -14,7 +15,6 @@ from common.logging.logger import log_info, log_error
 from common.exceptions.base_exception import BadRequestException, InternalServerErrorException
 from common.utils.ip_utils import extract_client_ip
 from infrastructure.database.redis.redis_client import get_redis_client
-from common.security.jwt.auth import get_current_user
 
 router = APIRouter()
 

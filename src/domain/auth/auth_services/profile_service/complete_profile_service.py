@@ -8,13 +8,13 @@ from bson import ObjectId
 from redis.asyncio import Redis
 from fastapi import HTTPException, Request
 
+from common.security.jwt_handler import decode_token, generate_access_token, generate_refresh_token
 from common.translations.messages import get_message
 from common.logging.logger import log_error, log_info
 from common.exceptions.base_exception import (
     BadRequestException, ForbiddenException, InternalServerErrorException, UnauthorizedException
 )
-from common.security.jwt.tokens import generate_access_token, generate_refresh_token
-from common.security.jwt.decode import decode_token
+
 from common.utils.ip_utils import extract_client_ip
 
 from domain.auth.entities.token_entity import UserJWTProfile, VendorJWTProfile

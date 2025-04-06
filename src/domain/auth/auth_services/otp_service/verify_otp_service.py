@@ -9,10 +9,9 @@ from fastapi import HTTPException
 
 from common.config.settings import settings
 from common.logging.logger import log_error, log_info
+from common.security.jwt_handler import decode_token, generate_access_token
 from common.translations.messages import get_message
-from common.security.jwt.decode import decode_token
 from common.security.jwt.payload_builder import build_jwt_payload
-from common.security.jwt.tokens import generate_access_token
 from common.exceptions.base_exception import (
     InternalServerErrorException,
     BadRequestException,

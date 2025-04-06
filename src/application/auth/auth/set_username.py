@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from typing import Annotated
 
-from common.security.jwt.auth import get_current_user
+from common.security.jwt_handler import get_current_user
 from domain.users.user_services.username_service.validate import is_valid_username
 from domain.users.user_services.username_service.check_unique import check_username_unique
 from domain.users.user_services.username_service.reserve import check_reserved_username
