@@ -6,9 +6,7 @@ from redis.asyncio import Redis
 from common.logging.logger import log_info, log_error
 from common.security.jwt_handler import revoke_token
 from common.translations.messages import get_message
-from infrastructure.database.redis.operations.delete import delete
-from infrastructure.database.redis.operations.hgetall import hgetall
-from infrastructure.database.redis.operations.keys import keys
+from infrastructure.database.redis.operations.redis_operations import keys, hgetall, delete
 from infrastructure.database.redis.redis_client import get_redis_client
 
 async def logout_service(
@@ -38,7 +36,6 @@ async def logout_service(
         revoked_sessions = 0
         revoked_refresh_tokens = 0
 
-        # حذف همه سشن‌ها
         session_keys = await keys(f"sessions:{user_id}:*", redis=redis)
         for key in session_keys:
             session_data = await hgetall(key, redis=redis)
@@ -50,7 +47,6 @@ async def logout_service(
                     await revoke_token(jti, ttl=900, redis=redis)
                     log_info("Session token revoked", extra={"jti": jti, "user_id": user_id})
 
-        # حذف همه توکن‌های رفرش
         refresh_keys = await keys(f"refresh_tokens:{user_id}:*", redis=redis)
         for rkey in refresh_keys:
             deleted = await delete(rkey, redis=redis)

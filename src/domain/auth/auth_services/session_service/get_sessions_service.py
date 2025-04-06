@@ -3,19 +3,15 @@
 from datetime import datetime, timezone
 from fastapi import HTTPException, status, Depends
 from redis.asyncio import Redis
-from typing import Optional
 
 from common.logging.logger import log_info, log_error
 from common.translations.messages import get_message
 from infrastructure.database.mongodb.mongo_client import insert_one
-from infrastructure.database.redis.operations.hgetall import hgetall
-from infrastructure.database.redis.operations.scan import scan_keys
-from infrastructure.database.redis.operations.ttl import ttl as redis_ttl
+from infrastructure.database.redis.operations.redis_operations import scan_keys, hgetall, ttl
 from infrastructure.database.redis.redis_client import get_redis_client
 from domain.notification.notification_services.builder import build_notification_content
 from domain.notification.notification_services.dispatcher import dispatch_notification
 from domain.notification.entities.notification_entity import NotificationChannel
-from domain.auth.entities.session_entity import Session
 
 async def log_audit(action: str, details: dict):
     await insert_one("audit_logs", {
@@ -143,7 +139,7 @@ async def get_sessions_service(
                 })
                 continue
 
-            session_ttl = await redis_ttl(key, redis)
+            session_ttl = await ttl(key, redis)
             log_info("Session TTL checked", extra={
                 "session_id": session_id,
                 "ttl": session_ttl,
@@ -179,7 +175,7 @@ async def get_sessions_service(
             "user_id": user_id,
             "session_count": len(sessions),
             "status_filter": status_filter,
-            "ip": client_ip,  # اینجا از client_ip استفاده می‌کنیم که str هست
+            "ip": client_ip,
             "requester_role": requester_role,
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
@@ -188,7 +184,7 @@ async def get_sessions_service(
             "user_id": user_id,
             "session_count": len(sessions),
             "status_filter": status_filter,
-            "ip": client_ip,  # اینجا هم str هست
+            "ip": client_ip,
             "requester_role": requester_role,
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
@@ -213,7 +209,7 @@ async def get_sessions_service(
         log_error("Session retrieval failed", extra={
             "user_id": user_id,
             "error": str(e),
-            "ip": client_ip,  # اینجا هم str هست
+            "ip": client_ip,
             "timestamp": datetime.now(timezone.utc).isoformat()
         }, exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=get_message("server.error", language))

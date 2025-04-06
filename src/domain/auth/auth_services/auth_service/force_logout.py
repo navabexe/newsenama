@@ -1,4 +1,4 @@
-# force_logout_service.py - نسخه اصلاح‌شده با بررسی نوع کلید Redis قبل از حذف و عملیات revoke
+# force_logout_service.py
 
 from datetime import datetime, timezone
 
@@ -8,9 +8,7 @@ from redis.asyncio import Redis
 from common.logging.logger import log_info, log_error
 from common.translations.messages import get_message
 from common.security.jwt_handler import revoke_token
-from infrastructure.database.redis.operations.delete import delete
-from infrastructure.database.redis.operations.hgetall import hgetall
-from infrastructure.database.redis.operations.keys import keys
+from infrastructure.database.redis.operations.redis_operations import keys, delete, hgetall
 from infrastructure.database.redis.redis_client import get_redis_client
 
 

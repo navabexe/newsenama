@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from common.config.settings import settings
 from common.logging.logger import log_info, log_error
-from infrastructure.database.redis.operations.get import get
+from infrastructure.database.redis.operations.redis_operations import get
 from infrastructure.database.redis.redis_client import get_redis_client
 from .errors import JWTError, TokenRevokedError, TokenTypeMismatchError
 from .revoke import revoke_all_user_tokens

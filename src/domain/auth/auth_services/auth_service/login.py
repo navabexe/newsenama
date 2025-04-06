@@ -20,8 +20,7 @@ from common.exceptions.base_exception import (
 )
 
 from infrastructure.database.mongodb.mongo_client import find_one
-from infrastructure.database.redis.operations.hset import hset
-from infrastructure.database.redis.operations.expire import expire
+from infrastructure.database.redis.operations.redis_operations import hset, expire
 from infrastructure.database.redis.redis_client import get_redis_client
 
 

@@ -23,13 +23,9 @@ from domain.notification.notification_services.dispatcher import dispatch_notifi
 from domain.notification.entities.notification_entity import NotificationChannel
 
 from infrastructure.database.mongodb.mongo_client import find_one, update_one, find, insert_one
+from infrastructure.database.redis.operations.redis_operations import scan_keys, expire, incr, get, delete, hset
 from infrastructure.database.redis.redis_client import get_redis_client
-from infrastructure.database.redis.operations.delete import delete
-from infrastructure.database.redis.operations.scan import scan_keys
-from infrastructure.database.redis.operations.expire import expire
-from infrastructure.database.redis.operations.hset import hset
-from infrastructure.database.redis.operations.incr import incr
-from infrastructure.database.redis.operations.get import get
+
 
 async def delete_all_sessions(user_id: str, redis: Redis):
     keys = await scan_keys(redis, f"sessions:{user_id}:*")

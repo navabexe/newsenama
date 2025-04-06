@@ -4,12 +4,9 @@ from redis.asyncio import Redis
 from common.security.jwt_handler import decode_token, generate_access_token, generate_refresh_token, revoke_token
 from common.translations.messages import get_message
 from common.logging.logger import log_info, log_error
-from infrastructure.database.redis.operations.delete import delete
-from infrastructure.database.redis.operations.get import get
-from infrastructure.database.redis.operations.hset import hset
-from infrastructure.database.redis.operations.expire import expire
 from infrastructure.database.mongodb.repository import MongoRepository
 from common.config.settings import settings
+from infrastructure.database.redis.operations.redis_operations import get, delete, hset, expire
 
 
 async def refresh_tokens(
@@ -83,7 +80,7 @@ async def refresh_tokens(
         session_id=session_id,
         status=status,
         language=language,
-        return_jti=True  # تغییر تابع generate_refresh_token لازم است
+        return_jti=True
     )
 
     # Save new refresh token in Redis

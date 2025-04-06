@@ -11,22 +11,17 @@ from common.translations.messages import get_message
 from common.security.permissions_loader import get_scopes_for_role
 from common.security.jwt.tokens import generate_access_token, generate_refresh_token
 from infrastructure.database.mongodb.mongo_client import find_one, update_one, insert_one
-from infrastructure.database.redis.operations.delete import delete
-from infrastructure.database.redis.operations.keys import keys
-from infrastructure.database.redis.operations.hset import hset
-from infrastructure.database.redis.operations.expire import expire
-from infrastructure.database.redis.operations.incr import incr
-from infrastructure.database.redis.operations.get import get
 from common.exceptions.base_exception import (
     NotFoundException,
     ForbiddenException,
     BadRequestException,
     InternalServerErrorException,
-    UnauthorizedException
 )
 from domain.notification.notification_services.builder import build_notification_content
 from domain.notification.notification_services.dispatcher import dispatch_notification
 from domain.notification.entities.notification_entity import NotificationChannel
+from infrastructure.database.redis.operations.redis_operations import expire, incr, get, delete, keys, hset
+
 
 async def notify_vendor_of_status(vendor_id: str, phone: str, status: str, client_ip: str, language: str) -> bool:
     try:

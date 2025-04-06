@@ -1,6 +1,6 @@
 # File: src/application/notification/send_notification.py
 
-from fastapi import APIRouter, Request, status, Depends, HTTPException
+from fastapi import APIRouter, Request, status, Depends
 from pydantic import Field
 from typing import Annotated, Literal, Optional
 from redis.asyncio import Redis

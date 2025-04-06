@@ -4,9 +4,7 @@ from fastapi import Depends
 
 from common.config.settings import settings
 from common.logging.logger import log_info, log_error
-from infrastructure.database.redis.operations.delete import delete
-from infrastructure.database.redis.operations.keys import keys
-from infrastructure.database.redis.operations.setex import setex
+from infrastructure.database.redis.operations.redis_operations import delete, keys, setex
 from infrastructure.database.redis.redis_client import get_redis_client
 from .errors import JWTError
 
