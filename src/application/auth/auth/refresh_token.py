@@ -1,13 +1,12 @@
-# File: application/auth/controllers/refresh_token.py
-
 from fastapi import APIRouter, Request, Depends, HTTPException, status
 from redis.asyncio import Redis
 from typing import Annotated
 from pydantic import Field, ConfigDict
 
 from common.schemas.request_base import BaseRequestModel
+from common.schemas.standard_response import StandardResponse, Meta
 from common.translations.messages import get_message
-from domain.auth.auth_services.auth_service.refresh_token import refresh_tokens
+from domain.auth.auth_services.auth_service.refresh_token_service import refresh_tokens
 from infrastructure.database.redis.redis_client import get_redis_client
 from infrastructure.database.mongodb.mongo_client import get_mongo_collection
 from infrastructure.database.mongodb.repository import MongoRepository
@@ -28,6 +27,7 @@ class RefreshTokenRequest(BaseRequestModel):
 @router.post(
     "/refresh-token",
     status_code=status.HTTP_200_OK,
+    response_model=StandardResponse,
     responses={
         200: {"description": "Token refreshed successfully."},
         400: {"description": "Invalid refresh token."},
@@ -52,12 +52,27 @@ async def refresh_token(
             vendors_repo=vendors_repo,
             language=body.response_language
         )
-        log_info("Refresh token successful", extra={"ip": client_ip})
-        return result
+        log_info("Refresh token successful", extra={
+            "ip": client_ip,
+            "user_id": result.get("user_id", "unknown"),
+            "session_id": result.get("session_id", "unknown")
+        })
+        return StandardResponse(
+            meta=Meta(
+                message=result["message"],
+                status="success",
+                code=200
+            ),
+            data={
+                "access_token": result["access_token"],
+                "refresh_token": result["refresh_token"],
+                "status": result["status"]
+            }
+        )
 
     except HTTPException as e:
         log_error("Refresh token HTTPException", extra={"detail": str(e.detail), "ip": client_ip})
-        raise  # خطای اصلی (مثل 401) را مستقیماً برگردانید
+        raise
 
     except Exception as e:
         log_error("Refresh token error", extra={"error": str(e), "ip": client_ip})

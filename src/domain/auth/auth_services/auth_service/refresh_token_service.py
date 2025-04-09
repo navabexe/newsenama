@@ -18,7 +18,9 @@ async def refresh_tokens(
     language: str = "fa"
 ):
     client_ip = await extract_client_ip(request)
+    user_agent = request.headers.get("User-Agent", "Unknown")
 
+    # رمزگشایی توکن رفرش
     payload = await decode_token(token=refresh_token, token_type="refresh", redis=redis)
 
     user_id = payload.get("sub")
@@ -32,17 +34,18 @@ async def refresh_tokens(
         log_error("Malformed refresh token", extra={"payload": payload, "ip": client_ip})
         raise HTTPException(status_code=400, detail=get_message("token.invalid", language))
 
+    # بررسی وجود توکن رفرش در ردیس
     redis_key = f"refresh_tokens:{user_id}:{old_jti}"
     redis_value = await get(redis_key, redis=redis)
     if not redis_value:
         log_error("Refresh token not found or reused", extra={"user_id": user_id, "jti": old_jti, "ip": client_ip})
         raise HTTPException(status_code=401, detail=get_message("token.expired", language))
 
-    # Revoke old token
+    # ابطال توکن رفرش قدیمی
+    await revoke_token(token=refresh_token, token_type="refresh", redis=redis)
     await delete(redis_key, redis=redis)
-    await revoke_token(old_jti, ttl=7 * 24 * 60 * 60, redis=redis)
 
-    # Get user info
+    # دریافت اطلاعات کاربر
     status = None
     phone_verified = None
     user_profile = None
@@ -61,7 +64,7 @@ async def refresh_tokens(
             phone_verified = user.get("phone_verified", False)
             user_profile = user
 
-    # Generate new tokens
+    # تولید توکن‌های جدید
     access_token = await generate_access_token(
         user_id=user_id,
         role=role,
@@ -83,17 +86,29 @@ async def refresh_tokens(
         return_jti=True
     )
 
-    # Save new refresh token in Redis
+    # ذخیره توکن رفرش جدید در ردیس
     refresh_key = f"refresh_tokens:{user_id}:{new_jti}"
     await redis.setex(refresh_key, settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60, "active")
     log_info("Stored new refresh token in Redis", extra={"key": refresh_key, "ip": client_ip})
 
-    # Update session info
+    # استخراج و ذخیره اطلاعات کامل سشن
+    now = datetime.now(timezone.utc)
     session_key = f"sessions:{user_id}:{session_id}"
+    existing_session = await redis.hgetall(session_key)
     session_data = {
         "ip": client_ip,
-        "last_refreshed": datetime.now(timezone.utc).isoformat()
+        "device_name": existing_session.get("device_name", "Unknown Device"),
+        "device_type": existing_session.get("device_type", "Desktop"),
+        "os": existing_session.get("os", "Windows"),
+        "browser": existing_session.get("browser", "Chrome"),
+        "user_agent": user_agent,
+        "location": existing_session.get("location", "Unknown"),
+        "created_at": existing_session.get("created_at", now.isoformat()),
+        "last_refreshed": now.isoformat(),
+        "status": "active",
+        "jti": session_id
     }
+
     await hset(session_key, mapping=session_data, redis=redis)
     await expire(session_key, 86400, redis=redis)
 

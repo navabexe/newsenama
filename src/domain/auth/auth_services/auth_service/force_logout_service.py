@@ -3,11 +3,9 @@
 from datetime import datetime, timezone
 from fastapi import HTTPException, status
 from redis.asyncio import Redis
-
 from common.logging.logger import log_info, log_error
 from common.translations.messages import get_message
-from common.security.jwt_handler import revoke_token
-from infrastructure.database.redis.operations.redis_operations import keys, delete, hgetall
+from infrastructure.database.redis.operations.redis_operations import keys, delete, hgetall, setex
 from infrastructure.database.redis.redis_client import get_redis_client
 
 async def force_logout_service(
@@ -18,7 +16,11 @@ async def force_logout_service(
     language: str = "fa"
 ) -> dict:
     try:
-        log_info("Starting force logout process - v5", extra={"target_user_id": target_user_id, "client_ip": client_ip, "admin_id": current_user.get("user_id")})
+        log_info("Starting force logout process - v5", extra={
+            "target_user_id": target_user_id,
+            "client_ip": client_ip,
+            "admin_id": current_user.get("user_id")
+        })
 
         if redis is None:
             redis = await get_redis_client()
@@ -33,6 +35,7 @@ async def force_logout_service(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=get_message("auth.forbidden", language))
 
         revoked_jtis = []
+        current_time = int(datetime.now(timezone.utc).timestamp())
 
         # حذف سشن‌ها
         session_keys = await keys(f"sessions:{target_user_id}:*", redis=redis)
@@ -58,7 +61,7 @@ async def force_logout_service(
             else:
                 log_info("Ignoring non-hash session key - v5", extra={"key": key, "type": key_type_str})
 
-        # حذف رفرش توکن‌ها (پشتیبانی از string)
+        # حذف رفرش توکن‌ها
         refresh_keys = await keys(f"refresh_tokens:{target_user_id}:*", redis=redis)
         log_info("Retrieved refresh token keys - v5", extra={"target_user_id": target_user_id, "refresh_keys": refresh_keys})
         revoked_refresh_tokens = 0
@@ -67,7 +70,7 @@ async def force_logout_service(
             key_type = await redis.type(rkey)
             key_type_str = key_type.decode() if isinstance(key_type, bytes) else key_type
             log_info("Evaluating refresh token key type - v5", extra={"key": rkey, "type": key_type_str})
-            if key_type_str in ['hash', 'string']:  # پشتیبانی از هر دو نوع
+            if key_type_str in ['hash', 'string']:
                 log_info("Processing refresh token key - v5", extra={"key": rkey, "type": key_type_str})
                 if key_type_str == 'hash':
                     session_data = await hgetall(rkey, redis=redis)
@@ -84,10 +87,14 @@ async def force_logout_service(
             else:
                 log_info("Ignoring unsupported refresh token key - v5", extra={"key": rkey, "type": key_type_str})
 
-        # باطل کردن همه jti‌ها
+        # باطل کردن JTI‌ها در لیست سیاه
         for jti in revoked_jtis:
-            await revoke_token(jti, ttl=86400, redis=redis)
-            log_info("Revoked token - v5", extra={"jti": jti, "user_id": target_user_id})
+            blacklist_key = f"blacklist:{jti}"
+            # TTL بر اساس نوع: 24 ساعت برای سشن، 30 روز برای رفرش توکن
+            ttl = 2592000 if jti in [rkey.split(":")[-1] for rkey in refresh_keys] else 86400
+            ttl = max(ttl - (current_time - 1744231142), 0)  # کسر زمان سپری‌شده از زمان تولید توکن
+            await setex(blacklist_key, ttl, "revoked", redis=redis)
+            log_info("JTI added to blacklist - v5", extra={"jti": jti, "ttl": ttl, "user_id": target_user_id})
 
         log_info("Force logout completed - v5", extra={
             "admin_id": current_user.get("user_id"),
