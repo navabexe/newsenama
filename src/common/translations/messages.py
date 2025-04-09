@@ -241,7 +241,24 @@ MESSAGES = {
     "auth.force_logout.no_sessions_found": {
         "fa": "کاربری با این شناسه یافت نشد یا هیچ جلسه فعالی ندارد.",
         "en": "User not found or no active sessions exist."
-    }
+    },
+    "sessions.active_retrieved": {
+        "fa": "جلسات فعال با موفقیت بازیابی شدند",
+        "en": "Active sessions retrieved successfully"
+    },
+    "sessions.all_retrieved": {
+        "fa": "همه جلسات با موفقیت بازیابی شدند",
+        "en": "All sessions retrieved successfully"
+    },
+    "notification.vendor.active.title": {
+        "fa": "پروفایل فروشنده فعال شد",
+        "en": "Vendor Profile Activated"
+    },
+    "notification.vendor.active.body": {
+        "fa": "پروفایل فروشنده شما با شماره {phone} اکنون فعال است. خوش آمدید!",
+        "en": "Your vendor profile with phone {phone} is now active. Welcome!"
+    },
+
 }
 
 

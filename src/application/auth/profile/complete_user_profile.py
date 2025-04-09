@@ -1,22 +1,20 @@
 # File: src/application/auth/complete_user_profile.py
-
 from fastapi import APIRouter, Request, status, Depends, HTTPException
 from pydantic import EmailStr, Field, ConfigDict
 from typing import List, Optional, Annotated
 from redis.asyncio import Redis
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from common.schemas.request_base import BaseRequestModel
-from common.schemas.standard_response import StandardResponse, Meta
+from common.schemas.standard_response import StandardResponse
 from common.translations.messages import get_message
 from domain.auth.auth_services.profile_service.complete_profile_service import complete_profile_service
 from infrastructure.database.redis.redis_client import get_redis_client
-
-from common.exceptions.base_exception import (
-    BadRequestException,
-    InternalServerErrorException
-)
+from infrastructure.database.mongodb.connection import get_mongo_db
+from common.exceptions.base_exception import InternalServerErrorException
 from common.logging.logger import log_info, log_error
 from common.utils.ip_utils import extract_client_ip
+from common.config.settings import settings
 
 router = APIRouter()
 
@@ -35,19 +33,30 @@ class CompleteUserProfile(BaseRequestModel):
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
+def log_endpoint_error(error: str | Exception, client_ip: str, data: CompleteUserProfile, endpoint: str = settings.COMPLETE_USER_PROFILE_PATH):
+    log_error(f"Handled error in {endpoint}", extra={
+        "error": str(error),
+        "ip": client_ip,
+        "endpoint": endpoint,
+        "request_id": data.request_id,
+        "client_version": data.client_version,
+        "device_fingerprint": data.device_fingerprint
+    })
+
 @router.post(
-    "/complete-user-profile",
+    settings.COMPLETE_USER_PROFILE_PATH,
     status_code=status.HTTP_200_OK,
     response_model=StandardResponse,
     summary="Complete user profile",
-    tags=["Authentication"]
+    tags=[settings.AUTH_TAG]
 )
 async def complete_user_profile(
     data: CompleteUserProfile,
     request: Request,
-    redis: Annotated[Redis, Depends(get_redis_client)]
+    redis: Annotated[Redis, Depends(get_redis_client)],
+    db: Annotated[AsyncIOMotorDatabase, Depends(get_mongo_db)]
 ):
-    client_ip = await extract_client_ip(request)  # اضافه کردن await
+    client_ip = await extract_client_ip(request)
     language = data.response_language
 
     try:
@@ -59,13 +68,14 @@ async def complete_user_profile(
             languages=data.preferred_languages,
             request=request,
             language=language,
-            redis=redis
+            redis=redis,
+            db=db
         )
 
         log_info("User profile completed", extra={
             "email": data.email,
             "ip": client_ip,
-            "endpoint": "/complete-user-profile",
+            "endpoint": settings.COMPLETE_USER_PROFILE_PATH,
             "request_id": data.request_id,
             "client_version": data.client_version,
             "device_fingerprint": data.device_fingerprint
@@ -77,23 +87,9 @@ async def complete_user_profile(
         )
 
     except HTTPException as http_exc:
-        log_error("Handled HTTPException in profile completion", extra={
-            "error": str(http_exc.detail),
-            "ip": client_ip,
-            "endpoint": "/complete-user-profile",
-            "request_id": data.request_id,
-            "client_version": data.client_version,
-            "device_fingerprint": data.device_fingerprint
-        })
+        log_endpoint_error(http_exc.detail, client_ip, data)
         raise http_exc
 
     except Exception as e:
-        log_error("Unexpected error in profile completion", extra={
-            "error": str(e),
-            "ip": client_ip,
-            "endpoint": "/complete-user-profile",
-            "request_id": data.request_id,
-            "client_version": data.client_version,
-            "device_fingerprint": data.device_fingerprint
-        }, exc_info=True)
+        log_endpoint_error(e, client_ip, data, exc_info=True)
         raise InternalServerErrorException(detail=get_message("server.error", language))

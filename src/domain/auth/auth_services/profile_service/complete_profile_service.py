@@ -1,36 +1,33 @@
-# File: domain/auth/auth_services/auth_service/complete_profile_service.py
-
+# File: src/domain/auth/services/profile/complete_profile_service.py
 from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Optional, List
-
 from bson import ObjectId
+from motor.motor_asyncio import AsyncIOMotorDatabase
 from redis.asyncio import Redis
-from fastapi import HTTPException, Request
+from fastapi import Request, HTTPException
 
 from common.security.jwt_handler import decode_token, generate_access_token, generate_refresh_token
 from common.translations.messages import get_message
 from common.logging.logger import log_error, log_info
+from common.config.settings import settings
 from common.exceptions.base_exception import (
     BadRequestException, ForbiddenException, InternalServerErrorException, UnauthorizedException
 )
-
 from common.utils.ip_utils import extract_client_ip
-
 from domain.auth.entities.token_entity import UserJWTProfile, VendorJWTProfile
-from domain.notification.notification_services.builder import build_notification_content
-from domain.notification.notification_services.dispatcher import dispatch_notification
-from domain.notification.entities.notification_entity import NotificationChannel
+from domain.auth.services.session_service import get_session_service
+from domain.notification.notification_services.notification_service import notification_service
+from infrastructure.database.redis.repositories.otp_repository import OTPRepository
+from infrastructure.database.mongodb.repositories.auth_repository import AuthRepository
 
-from infrastructure.database.mongodb.mongo_client import find_one, update_one, find, insert_one
-from infrastructure.database.redis.operations.redis_operations import scan_keys, expire, incr, get, delete, hset
-from infrastructure.database.redis.redis_client import get_redis_client
-
-
-async def delete_all_sessions(user_id: str, redis: Redis):
-    keys = await scan_keys(redis, f"sessions:{user_id}:*")
-    for key in keys:
-        await redis.delete(key)
+async def validate_business_categories(auth_repo: AuthRepository, ids: List[str], language: str):
+    query_ids = [ObjectId(cid) if ObjectId.is_valid(cid) else cid for cid in ids]
+    existing = await auth_repo.find("business_categories", {"_id": {"$in": query_ids}})
+    found_ids = {str(doc["_id"]) for doc in existing}
+    invalid = set(ids) - found_ids
+    if invalid:
+        raise BadRequestException(detail=f"Invalid business category IDs: {', '.join(invalid)}")
 
 def normalize_vendor_data(data: dict) -> dict:
     return {
@@ -41,61 +38,6 @@ def normalize_vendor_data(data: dict) -> dict:
         "account_types": data.get("account_types") or [],
         "show_followers_publicly": data.get("show_followers_publicly", True),
     }
-
-async def validate_business_categories(ids: List[str]):
-    query_ids = [ObjectId(cid) if ObjectId.is_valid(cid) else cid for cid in ids]
-    existing = await find("business_categories", {"_id": {"$in": query_ids}})
-    found_ids = {str(doc["_id"]) for doc in existing}
-    invalid = set(ids) - found_ids
-    if invalid:
-        raise BadRequestException(detail=f"Invalid business category IDs: {', '.join(invalid)}")
-
-async def log_audit(action: str, details: dict):
-    await insert_one("audit_logs", {
-        "action": action,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "details": details
-    })
-
-async def send_profile_notifications(
-    role: str,
-    user_id: str,
-    status: str,
-    language: str,
-    business_name: Optional[str] = None,
-    first_name: Optional[str] = None,
-    phone: str = None
-) -> bool:
-    try:
-        if role == "vendor" and status == "pending":
-            vendor_msg = await build_notification_content("vendor.profile_pending", language, {
-                "name": business_name,
-                "phone": phone
-            })
-            await dispatch_notification(user_id, "vendor", vendor_msg["title"], vendor_msg["body"], NotificationChannel.INAPP, "profile", user_id)
-
-            admin_msg = await build_notification_content("admin.vendor_submitted", language, {
-                "vendor_name": business_name,
-                "vendor_phone": phone
-            })
-            await dispatch_notification("admin", "admin", admin_msg["title"], admin_msg["body"], NotificationChannel.INAPP, "profile", user_id)
-
-        elif role == "user" and status == "active":
-            user_msg = await build_notification_content("user.profile_completed", language, {
-                "name": first_name,
-                "phone": phone
-            })
-            await dispatch_notification(user_id, "user", user_msg["title"], user_msg["body"], NotificationChannel.INAPP, "profile", user_id)
-
-            admin_msg = await build_notification_content("admin.user_joined", language, {
-                "user_name": first_name,
-                "user_phone": phone
-            })
-            await dispatch_notification("admin", "admin", admin_msg["title"], admin_msg["body"], NotificationChannel.INAPP, "profile", user_id)
-        return True
-    except Exception as notify_err:
-        log_error("Profile notification failed", extra={"error": str(notify_err)})
-        return False
 
 async def complete_profile_service(
     temporary_token: str,
@@ -113,18 +55,20 @@ async def complete_profile_service(
     languages: Optional[List[str]] = None,
     request: Optional[Request] = None,
     language: str = "fa",
-    redis: Redis = None
+    redis: Redis = None,
+    db: AsyncIOMotorDatabase = None
 ) -> dict:
-    redis = redis or await get_redis_client()
-    client_ip = await extract_client_ip(request)  # اضافه کردن await
+    repo = OTPRepository(redis)
+    auth_repo = AuthRepository(db)
+    client_ip = await extract_client_ip(request) if request else "unknown"
 
     # Rate limiting
     rate_limit_key = f"profile_complete_limit:{temporary_token}"
-    attempts = await get(rate_limit_key, redis)
-    if attempts and int(attempts) >= 5:
+    attempts = await repo.get(rate_limit_key)
+    if attempts and int(attempts) >= settings.PROFILE_COMPLETE_RATE_LIMIT:
         raise BadRequestException(detail=get_message("profile.too_many", language))
-    await incr(rate_limit_key, redis)
-    await expire(rate_limit_key, 3600, redis)  # 5 attempts per hour
+    await repo.incr(rate_limit_key)
+    await repo.expire(rate_limit_key, settings.BLOCK_DURATION)
 
     try:
         payload = await decode_token(temporary_token, token_type="temp", redis=redis)
@@ -136,7 +80,7 @@ async def complete_profile_service(
             raise UnauthorizedException(detail=get_message("token.invalid", language))
 
         temp_key = f"temp_token:{jti}"
-        stored_phone = await redis.get(temp_key)
+        stored_phone = await repo.get(temp_key)
         if stored_phone != phone:
             raise UnauthorizedException(detail=get_message("otp.expired", language))
 
@@ -147,15 +91,12 @@ async def complete_profile_service(
             raise BadRequestException(detail=get_message("vendor.not_eligible", language))
 
         collection = f"{role}s"
-        user = await find_one(collection, {"phone": phone})
+        user = await auth_repo.find_one(collection, {"phone": phone})
         if not user or user.get("status") not in ["incomplete", "pending"]:
             raise BadRequestException(detail=get_message(f"{role}.not_eligible", language))
 
         user_id = str(user["_id"])
         update_data = {"updated_at": datetime.now(timezone.utc)}
-
-        VALID_VISIBILITY = ["COLLABORATIVE", "PUBLIC", "PRIVATE", "TEMPORARILY_CLOSED"]
-        VALID_VENDOR_TYPES = ["BASIC", "PRO"]
 
         if role == "user":
             if not first_name or not last_name:
@@ -171,11 +112,11 @@ async def complete_profile_service(
         if role == "vendor":
             if first_name: update_data["first_name"] = first_name.strip()
             if last_name: update_data["last_name"] = last_name.strip()
-            if business_category_ids: await validate_business_categories(business_category_ids)
-            if visibility and visibility not in VALID_VISIBILITY:
-                raise BadRequestException(detail=f"Visibility must be one of {VALID_VISIBILITY}")
-            if vendor_type and vendor_type not in VALID_VENDOR_TYPES:
-                raise BadRequestException(detail=f"Vendor type must be one of {VALID_VENDOR_TYPES}")
+            if business_category_ids: await validate_business_categories(auth_repo, business_category_ids, language)
+            if visibility and visibility not in settings.VALID_VISIBILITY:
+                raise BadRequestException(detail=f"Visibility must be one of {settings.VALID_VISIBILITY}")
+            if vendor_type and vendor_type not in settings.VALID_VENDOR_TYPES:
+                raise BadRequestException(detail=f"Vendor type must be one of {settings.VALID_VENDOR_TYPES}")
             update_data.update({
                 "business_name": business_name.strip(),
                 "city": city.strip() if city else None,
@@ -185,20 +126,18 @@ async def complete_profile_service(
                 "visibility": visibility,
                 "vendor_type": vendor_type,
                 "preferred_languages": languages or [],
-                "business_category_ids": business_category_ids or []
+                "business_category_ids": business_category_ids or [],
+                "status": "pending" if all([business_name, city, province, location, address, business_category_ids]) else "incomplete"
             })
 
-        await update_one(collection, {"_id": ObjectId(user_id)}, update_data)
-        updated_user = await find_one(collection, {"_id": ObjectId(user_id)})
+        await auth_repo.update_one(collection, {"_id": ObjectId(user_id)}, update_data)
+        updated_user = await auth_repo.find_one(collection, {"_id": ObjectId(user_id)})
+        if not updated_user:
+            raise InternalServerErrorException(detail=get_message("server.error", language))
 
-        if role == "vendor" and updated_user.get("status") == "incomplete":
-            required = ["business_name", "city", "province", "location", "address", "business_category_ids"]
-            if all(updated_user.get(f) for f in required):
-                await update_one(collection, {"_id": ObjectId(user_id)}, {"status": "pending"})
-                updated_user["status"] = "pending"
-
-        await delete(temp_key, redis)
-        await delete_all_sessions(user_id, redis)
+        await repo.delete(temp_key)
+        session_service = get_session_service(redis)
+        await session_service.delete_incomplete_sessions(user_id)
 
         session_id = str(uuid4())
         if role == "vendor":
@@ -207,7 +146,7 @@ async def complete_profile_service(
         profile_model = UserJWTProfile if role == "user" else VendorJWTProfile
         profile_data = profile_model(**updated_user).model_dump()
         token_lang = (languages or [language])[0]
-        device = getattr(request, 'device_fingerprint', "unknown") if request else "unknown"
+        device = getattr(request, "device_fingerprint", "unknown") if request else "unknown"
 
         access_token = await generate_access_token(
             user_id=user_id,
@@ -221,34 +160,72 @@ async def complete_profile_service(
 
         refresh_token = None
         if role == "user" and updated_user.get("status") == "active":
-            refresh_token = await generate_refresh_token(user_id, role, session_id)
+            refresh_token, refresh_jti = await generate_refresh_token(user_id, role, session_id, return_jti=True)
             session_key = f"sessions:{user_id}:{session_id}"
-            await hset(session_key, {
-                "ip": client_ip,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "device": device,
-                "status": "active",
-                "jti": session_id
-            }, redis=redis)
-            await expire(session_key, 86400, redis=redis)
+            await repo.hset(session_key, mapping={
+                b"ip": client_ip.encode(),
+                b"created_at": datetime.now(timezone.utc).isoformat().encode(),
+                b"device_name": b"Unknown Device",
+                b"device_type": b"Desktop",
+                b"os": b"Windows",
+                b"browser": b"Chrome",
+                b"user_agent": b"Unknown",
+                b"location": b"Unknown",
+                b"status": b"active",
+                b"jti": session_id.encode()
+            })
+            await repo.expire(session_key, settings.SESSION_EXPIRY)
+            await repo.setex(
+                f"refresh_tokens:{user_id}:{refresh_jti}",
+                settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+                "active"
+            )
 
         audit_data = {
             "user_id": user_id,
             "role": role,
             "status": updated_user["status"],
-            "ip": client_ip,  # حالا یک string است
+            "ip": client_ip,
             "session_id": session_id,
             "device": device,
             "request_id": getattr(request, "request_id", None) if request else None,
             "client_version": getattr(request, "client_version", None) if request else None
         }
-        await log_audit(f"{role}_profile_completed", audit_data)
+        await auth_repo.log_audit(f"{role}_profile_completed", audit_data)
         log_info("Profile completed", extra=audit_data)
 
-        notification_sent = await send_profile_notifications(
-            role, user_id, updated_user["status"], language,
-            business_name=business_name, first_name=first_name, phone=phone
+        notification_sent = await notification_service.send(
+            receiver_id=user_id,
+            receiver_type=role,
+            template_key="user.profile_completed" if role == "user" else "vendor.profile_pending",
+            variables={"name": first_name or business_name, "phone": phone},
+            reference_type="profile",
+            reference_id=user_id,
+            language=language,
+            return_bool=True
         )
+        if role == "vendor" and updated_user["status"] == "pending":
+            await notification_service.send(
+                receiver_id="admin",
+                receiver_type="admin",
+                template_key="admin.vendor_submitted",
+                variables={"vendor_name": business_name, "vendor_phone": phone},
+                reference_type="profile",
+                reference_id=user_id,
+                language=language,
+                return_bool=False
+            )
+        elif role == "user" and updated_user["status"] == "active":
+            await notification_service.send(
+                receiver_id="admin",
+                receiver_type="admin",
+                template_key="admin.user_joined",
+                variables={"user_name": first_name, "user_phone": phone},
+                reference_type="profile",
+                reference_id=user_id,
+                language=language,
+                return_bool=False
+            )
 
         response_data = {
             "access_token": access_token,
@@ -273,5 +250,5 @@ async def complete_profile_service(
     except HTTPException:
         raise
     except Exception as e:
-        log_error("Profile completion failed", extra={"error": str(e)}, exc_info=True)
+        log_error("Profile completion failed", extra={"error": str(e), "ip": client_ip}, exc_info=True)
         raise InternalServerErrorException(detail=get_message("server.error", language))

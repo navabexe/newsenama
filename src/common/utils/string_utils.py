@@ -1,12 +1,10 @@
-# File: common/utils/string_utils.py
-
+# File: src/common/utils/string_utils.py
 import re
 import unicodedata
 import uuid
 import hashlib
 import secrets
 from datetime import datetime, UTC
-
 
 def slugify(text: str) -> str:
     """
@@ -18,20 +16,17 @@ def slugify(text: str) -> str:
     text = re.sub(r"[\s_-]+", "-", text).strip("-")
     return text
 
-
 def normalize_name(name: str) -> str:
     """
     Strips, title-cases, and removes duplicate spaces from a name.
     """
     return re.sub(r"\s+", " ", name.strip()).title()
 
-
 def truncate(text: str, max_len: int) -> str:
     """
     Truncate text to a maximum length with ellipsis if needed.
     """
     return text if len(text) <= max_len else text[:max_len - 3].rstrip() + "..."
-
 
 def generate_token(prefix: str = "token", user_id: str = None, ttl: int = 300) -> str:
     """
@@ -42,9 +37,16 @@ def generate_token(prefix: str = "token", user_id: str = None, ttl: int = 300) -
     base = f"{prefix}-{user_id or ''}-{now}-{random_str}-{str(uuid.uuid4())}"
     return hashlib.sha256(base.encode()).hexdigest()
 
-
 def generate_otp_code(length: int = 6) -> str:
     """
     Generates a numeric OTP code of given length.
     """
     return ''.join(secrets.choice("0123456789") for _ in range(length))
+
+def decode_value(value):
+    """
+    Decode bytes to str if necessary, otherwise return as-is.
+    """
+    if isinstance(value, bytes):
+        return value.decode()
+    return value  # Return str or None as-is

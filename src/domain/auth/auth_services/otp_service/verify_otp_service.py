@@ -1,104 +1,62 @@
-# File: domain/auth/auth_services/otp_service/verify_otp_service.py
-
+# File: src/domain/auth/services/otp/verify_otp_service.py
 import hashlib
-from os import access
+from datetime import datetime
 from uuid import uuid4
 from redis.asyncio import Redis
-from jose import jwt
 from fastapi import HTTPException
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from common.config.settings import settings
 from common.logging.logger import log_error, log_info
-from common.security.jwt_handler import decode_token, generate_access_token
+from common.security.jwt_handler import decode_token, generate_access_token, generate_temp_token, generate_refresh_token
 from common.translations.messages import get_message
-from common.security.jwt.payload_builder import build_jwt_payload
-from common.exceptions.base_exception import (
-    InternalServerErrorException,
-    BadRequestException,
-    TooManyRequestsException
-)
-from domain.auth.auth_services.session_service.get_sessions_service import decode_value
-from domain.auth.entities.token_entity import VendorJWTProfile
-
-from infrastructure.database.mongodb.mongo_client import find_one, insert_one, update_one
-from infrastructure.database.redis.operations.redis_operations import scan_keys, get, incr, expire, setex, hset, delete
-from infrastructure.database.redis.redis_client import get_redis_client
-
+from common.exceptions.base_exception import InternalServerErrorException, BadRequestException, TooManyRequestsException
 from common.utils.date_utils import utc_now
 from common.utils.ip_utils import get_location_from_ip
-from domain.notification.notification_services.builder import build_notification_content
-from domain.notification.notification_services.dispatcher import dispatch_notification
-from domain.notification.entities.notification_entity import NotificationChannel
-
-MAX_OTP_ATTEMPTS = settings.MAX_OTP_ATTEMPTS
-BLOCK_DURATION_OTP = settings.BLOCK_DURATION_OTP  # 10 minutes
-IPINFO_TOKEN = settings.IPINFO_TOKEN
-OTP_SALT = settings.OTP_SALT
+from domain.auth.entities.token_entity import VendorJWTProfile
+from domain.auth.services.session_service import get_session_service
+from domain.notification.notification_services.notification_service import notification_service
+from infrastructure.database.redis.repositories.otp_repository import OTPRepository
+from infrastructure.database.mongodb.repositories.auth_repository import AuthRepository
+from infrastructure.database.mongodb.connection import get_mongo_db
 
 def hash_otp(otp: str) -> str:
     salted = f"{settings.OTP_SALT}:{otp}"
     return hashlib.sha256(salted.encode()).hexdigest()
 
-async def delete_incomplete_sessions(user_id: str, redis: Redis):
-    session_keys = await scan_keys(redis, f"sessions:{user_id}:*")
-    for key in session_keys:
-        session_data = await redis.hgetall(key)
-        status = session_data.get(b"status") or session_data.get("status", b"")
-        if decode_value(status) != "active":
-            await redis.delete(key)
-            log_info("Deleted incomplete session", extra={"user_id": user_id, "session_key": key})
-
-async def log_audit(action: str, details: dict):
-    await insert_one("audit_logs", {
-        "action": action,
-        "timestamp": utc_now().isoformat(),
-        "details": details
-    })
-
-async def send_otp_verified_notification(phone: str, role: str, language: str):
-    try:
-        notification = await build_notification_content(
-            template_key="otp_verified",
-            language=language,
-            variables={"phone": phone, "role": role}
-        )
-        await dispatch_notification(
-            receiver_id=phone,
-            receiver_type=role,
-            title=notification["title"],
-            body=notification["body"],
-            channel=NotificationChannel.INAPP,
-            reference_type="otp",
-            reference_id=phone
-        )
-        return True
-    except Exception as notify_error:
-        log_error("OTP verified but notification failed", extra={"error": str(notify_error)})
-        return False
+def create_user_data(phone: str, role: str, language: str, now: datetime) -> dict:
+    return {
+        "phone": phone,
+        "role": role,
+        "status": "incomplete",
+        "phone_verified": True,
+        "preferred_languages": [language],
+        "created_at": now,
+        "updated_at": now
+    }
 
 async def verify_otp_service(
-        otp: str,
-        temporary_token: str,
-        client_ip: str,
-        language: str = "fa",
-        redis: Redis = None,
-        request_id: str = None,
-        client_version: str = None,
-        device_fingerprint: str = None,
-        user_agent: str = "Unknown"
+    otp: str,
+    temporary_token: str,
+    client_ip: str,
+    language: str = "fa",
+    redis: Redis = None,
+    db: AsyncIOMotorDatabase = None,
+    request_id: str = None,
+    client_version: str = None,
+    device_fingerprint: str = None,
+    user_agent: str = "Unknown"
 ) -> dict:
-    redis = redis or await get_redis_client()
+    repo = OTPRepository(redis)
+    if db is None:
+        db = await get_mongo_db()
+    auth_repo = AuthRepository(db)
+    session_service = get_session_service(redis)
 
     try:
         payload = await decode_token(temporary_token, token_type="temp", redis=redis)
     except HTTPException as e:
-        log_error("Token decode failed", extra={
-            "error": e.detail,
-            "ip": client_ip,
-            "request_id": request_id,
-            "client_version": client_version,
-            "device_fingerprint": device_fingerprint
-        })
+        log_error("Token decode failed", extra={"error": e.detail, "ip": client_ip, "request_id": request_id})
         raise
 
     try:
@@ -114,37 +72,32 @@ async def verify_otp_service(
         attempt_key = f"otp-attempts:{role}:{phone}"
         block_key = f"otp-blocked:{role}:{phone}"
 
-        if await get(block_key, redis):
+        if await repo.get(block_key):
             raise TooManyRequestsException(detail=get_message("otp.too_many.attempts", language))
 
-        stored_otp_hash = await get(redis_key, redis)
-        stored_phone = await get(temp_key, redis)
+        stored_otp_hash = await repo.get(redis_key)
+        stored_phone = await repo.get(temp_key)
 
         if not stored_otp_hash or not stored_phone:
             raise BadRequestException(detail=get_message("otp.expired", language))
 
         if stored_phone != phone or hash_otp(otp) != stored_otp_hash:
-            attempts = await incr(attempt_key, redis)
-            await expire(attempt_key, 600, redis)
-            remaining_attempts = MAX_OTP_ATTEMPTS - int(attempts)
+            attempts = await repo.incr(attempt_key)
+            await repo.expire(attempt_key, 600)
+            remaining_attempts = settings.MAX_OTP_ATTEMPTS - int(attempts)
 
             log_error("Invalid OTP attempt", extra={
                 "submitted_otp": otp,
-                "hashed_submitted": hash_otp(otp),
-                "expected_hash": stored_otp_hash,
                 "phone": phone,
                 "ip": client_ip,
-                "request_id": request_id,
-                "client_version": client_version,
-                "device_fingerprint": device_fingerprint,
                 "attempts": attempts,
                 "remaining_attempts": remaining_attempts
             })
 
-            if int(attempts) >= MAX_OTP_ATTEMPTS:
-                await delete(redis_key, redis)
-                await delete(temp_key, redis)
-                await setex(block_key, BLOCK_DURATION_OTP, "1", redis)
+            if int(attempts) >= settings.MAX_OTP_ATTEMPTS:
+                await repo.delete(redis_key)
+                await repo.delete(temp_key)
+                await repo.setex(block_key, settings.BLOCK_DURATION_OTP, "1")
                 raise TooManyRequestsException(detail=get_message("otp.too_many.attempts", language))
 
             raise BadRequestException(detail=get_message(
@@ -153,25 +106,17 @@ async def verify_otp_service(
                 variables={"remaining": remaining_attempts}
             ))
 
-        await delete(redis_key, redis)
-        await delete(temp_key, redis)
-        await delete(attempt_key, redis)
+        await repo.delete(redis_key)
+        await repo.delete(temp_key)
+        await repo.delete(attempt_key)
 
         collection = f"{role}s"
-        user = await find_one(collection, {"phone": phone})
+        user = await auth_repo.find_user(collection, phone)
         now = utc_now()
 
         if not user:
-            user_data = {
-                "phone": phone,
-                "role": role,
-                "status": "incomplete",
-                "phone_verified": True,
-                "preferred_languages": [language],
-                "created_at": now,
-                "updated_at": now
-            }
-            user_id = str(await insert_one(collection, user_data))
+            user_data = create_user_data(phone, role, language, now)
+            user_id = await auth_repo.insert_user(collection, user_data)
             user = {"_id": user_id, **user_data}
         else:
             user_id = str(user["_id"])
@@ -181,28 +126,25 @@ async def verify_otp_service(
             if not user.get("preferred_languages"):
                 update_fields["preferred_languages"] = [language]
             if update_fields:
-                await update_one(collection, {"_id": user["_id"]}, update_fields)
+                await auth_repo.update_user(collection, user_id, update_fields)
 
         status = user.get("status")
         preferred_language = (user.get("preferred_languages") or [language])[0]
-        notification_sent = await send_otp_verified_notification(phone, role, preferred_language)
+        notification_sent = await notification_service.send_otp_verified(phone, role, preferred_language)
 
         if status in ["incomplete", "pending"]:
             new_jti = str(uuid4())
-            temp_payload = build_jwt_payload(
-                token_type="temp",
-                role=role,
-                subject_id=phone,
+            temp_token = await generate_temp_token(
                 phone=phone,
+                role=role,
                 jti=new_jti,
                 status=status,
                 phone_verified=True,
-                expires_in=86400
+                language=preferred_language
             )
-            temp_token = jwt.encode(temp_payload, settings.ACCESS_SECRET, algorithm=settings.ALGORITHM)
-            await setex(f"temp_token:{new_jti}", 86400, phone, redis)
+            await repo.setex(f"temp_token:{new_jti}", settings.TEMP_TOKEN_EXPIRY, phone)
 
-            await log_audit("otp_verified_incomplete", {
+            await auth_repo.log_audit("otp_verified_incomplete", {
                 "user_id": user_id,
                 "phone": phone,
                 "role": role,
@@ -224,14 +166,18 @@ async def verify_otp_service(
             }
 
         elif status == "active":
-            await delete_incomplete_sessions(user_id, redis)
+            await session_service.delete_incomplete_sessions(user_id)
             session_id = str(uuid4())
-            updated_user = await find_one(collection, {"_id": user["_id"]})
+            updated_user = await auth_repo.find_user(collection, phone)
+            if updated_user is None:
+                log_error("User not found after OTP verification", extra={"phone": phone, "user_id": user_id})
+                raise InternalServerErrorException(detail=get_message("server.error", language))
             profile_data = VendorJWTProfile(**updated_user).model_dump() if role == "vendor" else None
 
             location = await get_location_from_ip(client_ip)
-
-            session_data = {
+            if location == "Unknown":
+                log_info("Location fetch failed, using default", extra={"ip": client_ip})
+            session_data = {  # تبدیل به bytes
                 b"ip": client_ip.encode(),
                 b"created_at": now.isoformat().encode(),
                 b"last_seen_at": now.isoformat().encode(),
@@ -245,8 +191,8 @@ async def verify_otp_service(
                 b"jti": session_id.encode()
             }
             session_key = f"sessions:{user_id}:{session_id}"
-            await hset(session_key, mapping=session_data, redis=redis)
-            await expire(session_key, 86400, redis)
+            await repo.hset(session_key, session_data)
+            await repo.expire(session_key, settings.SESSION_EXPIRY)
 
             access_token = await generate_access_token(
                 user_id=user_id,
@@ -254,29 +200,26 @@ async def verify_otp_service(
                 session_id=session_id,
                 vendor_profile=profile_data if role == "vendor" else None,
                 language=preferred_language,
-                scopes=[],
                 status="active",
                 phone_verified=True
             )
 
-            refresh_payload = build_jwt_payload(
-                token_type="refresh",
+            refresh_token, refresh_jti = await generate_refresh_token(
+                user_id=user_id,
                 role=role,
-                subject_id=user_id,
                 session_id=session_id,
                 status="active",
-                expires_in=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400
+                language=preferred_language,
+                return_jti=True
             )
-            refresh_token = jwt.encode(refresh_payload, settings.REFRESH_SECRET, algorithm=settings.ALGORITHM)
 
-            await setex(
-                f"refresh_tokens:{user_id}:{refresh_payload['jti']}",
+            await repo.setex(
+                f"refresh_tokens:{user_id}:{refresh_jti}",
                 settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
-                "active",
-                redis
+                "active"
             )
 
-            await log_audit("otp_verified_active", {
+            await auth_repo.log_audit("otp_verified_active", {
                 "user_id": user_id,
                 "phone": phone,
                 "role": role,
@@ -301,14 +244,11 @@ async def verify_otp_service(
 
     except HTTPException:
         raise
-
     except Exception as e:
         log_error("OTP verification failed", extra={
             "error": str(e),
             "ip": client_ip,
-            "endpoint": "/verify-otp",
-            "request_id": request_id,
-            "client_version": client_version,
-            "device_fingerprint": device_fingerprint
+            "endpoint": settings.VERIFY_OTP_PATH,
+            "request_id": request_id
         }, exc_info=True)
         raise InternalServerErrorException(detail=get_message("server.error", language))

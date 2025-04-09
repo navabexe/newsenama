@@ -1,66 +1,25 @@
-# File: domain/auth/auth_services/admin/approve_vendor_service.py
-
+# File: src/domain/auth/services/admin/approve_vendor_service.py
 from datetime import datetime, timezone
 from uuid import uuid4
 from bson import ObjectId
 from fastapi import HTTPException
+from motor.motor_asyncio import AsyncIOMotorDatabase
 from redis.asyncio import Redis
 
 from common.logging.logger import log_info, log_error
 from common.security.jwt_handler import generate_access_token, generate_refresh_token
 from common.translations.messages import get_message
 from common.security.permissions_loader import get_scopes_for_role
-from infrastructure.database.mongodb.mongo_client import find_one, update_one, insert_one
+from common.config.settings import settings
 from common.exceptions.base_exception import (
     NotFoundException,
     ForbiddenException,
     BadRequestException,
     InternalServerErrorException,
 )
-from domain.notification.notification_services.builder import build_notification_content
-from domain.notification.notification_services.dispatcher import dispatch_notification
-from domain.notification.entities.notification_entity import NotificationChannel
-from infrastructure.database.redis.operations.redis_operations import expire, incr, get, delete, keys, hset
-
-
-async def notify_vendor_of_status(vendor_id: str, phone: str, status: str, client_ip: str, language: str) -> bool:
-    try:
-        message_key = "vendor.approved" if status == "active" else "vendor.rejected"
-        content = await build_notification_content(message_key, language)
-        await dispatch_notification(
-            receiver_id=vendor_id,
-            receiver_type="vendor",
-            title=content["title"],
-            body=content["body"],
-            channel=NotificationChannel.INAPP,
-            reference_type="vendor",
-            reference_id=vendor_id
-        )
-        # SMS as pending (no real sending yet)
-        now = datetime.now(timezone.utc).isoformat()
-        await insert_one("notifications", {
-            "receiver_type": "vendor",
-            "receiver_id": vendor_id,
-            "title": content["title"],
-            "body": content["body"],
-            "channel": "sms",
-            "reference_type": "vendor",
-            "reference_id": vendor_id,
-            "status": "pending",
-            "created_at": now
-        })
-        log_info("Vendor notified successfully", extra={"vendor_id": vendor_id, "status": status, "ip": client_ip})
-        return True
-    except Exception as e:
-        log_error("Failed notifying vendor", extra={"vendor_id": vendor_id, "error": str(e)}, exc_info=True)
-        return False
-
-async def log_audit(action: str, details: dict):
-    await insert_one("audit_logs", {
-        "action": action,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "details": details
-    })
+from domain.notification.notification_services.notification_service import notification_service
+from infrastructure.database.redis.repositories.otp_repository import OTPRepository
+from infrastructure.database.mongodb.repositories.auth_repository import AuthRepository
 
 async def approve_vendor_service(
     current_user: dict,
@@ -68,16 +27,20 @@ async def approve_vendor_service(
     action: str,
     client_ip: str,
     redis: Redis,
+    db: AsyncIOMotorDatabase,
     language: str = "fa"
 ) -> dict:
+    repo = OTPRepository(redis)
+    auth_repo = AuthRepository(db)
+
     try:
         # Rate limiting
         rate_limit_key = f"approve_vendor_limit:{current_user.get('user_id')}"
-        attempts = await get(rate_limit_key, redis)
-        if attempts and int(attempts) >= 10:
+        attempts = await repo.get(rate_limit_key)
+        if attempts and int(attempts) >= settings.VENDOR_APPROVAL_RATE_LIMIT:
             raise BadRequestException(detail=get_message("vendor.too_many", language))
-        await incr(rate_limit_key, redis)
-        await expire(rate_limit_key, 3600, redis)
+        await repo.incr(rate_limit_key)
+        await repo.expire(rate_limit_key, settings.BLOCK_DURATION)
 
         if current_user.get("role") != "admin":
             log_error("Unauthorized attempt detected", extra={"user_id": current_user.get("user_id"), "ip": client_ip})
@@ -89,7 +52,7 @@ async def approve_vendor_service(
         if not ObjectId.is_valid(vendor_id):
             raise BadRequestException(detail=get_message("vendor.invalid_id", language))
 
-        vendor = await find_one("vendors", {"_id": ObjectId(vendor_id)})
+        vendor = await auth_repo.find_one("vendors", {"_id": ObjectId(vendor_id)})
         if not vendor or vendor.get("status") != "pending":
             raise NotFoundException(detail=get_message("vendor.not_pending", language))
 
@@ -99,21 +62,30 @@ async def approve_vendor_service(
             "updated_at": datetime.now(timezone.utc),
             "updated_by": current_user.get("user_id")
         }
-
         if action == "approve":
             update_data["account_verified"] = True
 
-        updated = await update_one("vendors", {"_id": ObjectId(vendor_id)}, update_data)
+        updated = await auth_repo.update_one("vendors", {"_id": ObjectId(vendor_id)}, update_data)
         if updated == 0:
             raise InternalServerErrorException(detail=get_message("server.error", language))
 
         if action == "reject":
-            temp_keys = await keys(f"temp_token:*:{vendor['phone']}", redis=redis)
+            temp_keys = await repo.scan_keys(f"temp_token:*:{vendor['phone']}")
             for key in temp_keys:
-                await delete(key, redis=redis)
+                await repo.delete(key)
                 log_info("Temporary tokens removed", extra={"vendor_id": vendor_id, "key": key})
 
-        notification_sent = await notify_vendor_of_status(str(vendor["_id"]), vendor["phone"], new_status, client_ip, language)
+        # اصلاح نوتیفیکیشن: استفاده از "vendor.approved" به‌جای "vendor.active"
+        notification_sent = await notification_service.send(
+            receiver_id=str(vendor["_id"]),
+            receiver_type="vendor",
+            template_key=f"vendor.{action}ed",  # "vendor.approved" یا "vendor.rejected"
+            variables={"phone": vendor["phone"]},
+            reference_type="vendor",
+            reference_id=str(vendor["_id"]),
+            language=language,
+            return_bool=True
+        )
 
         payload = {
             "status": new_status,
@@ -122,7 +94,6 @@ async def approve_vendor_service(
 
         if action == "approve":
             session_id = str(uuid4())
-            device = "unknown"
             scopes = get_scopes_for_role("vendor", new_status)
 
             user_profile = {
@@ -138,24 +109,40 @@ async def approve_vendor_service(
             }
 
             access_token = await generate_access_token(
-                user_id=str(vendor["_id"]), role="vendor",
-                session_id=session_id, user_profile=user_profile,
-                language=language, scopes=scopes
+                user_id=str(vendor["_id"]),
+                role="vendor",
+                session_id=session_id,
+                user_profile=user_profile,
+                language=language,
+                scopes=scopes
             )
-            refresh_token = await generate_refresh_token(
-                user_id=str(vendor["_id"]), role="vendor",
-                session_id=session_id
+            refresh_token, refresh_jti = await generate_refresh_token(
+                user_id=str(vendor["_id"]),
+                role="vendor",
+                session_id=session_id,
+                return_jti=True
             )
 
             session_key = f"sessions:{vendor['_id']}:{session_id}"
-            await hset(session_key, mapping={
-                "ip": client_ip,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "device": device,
-                "status": "active",
-                "jti": session_id
-            }, redis=redis)
-            await expire(session_key, 86400, redis=redis)
+            await repo.hset(session_key, mapping={
+                b"ip": client_ip.encode(),
+                b"created_at": datetime.now(timezone.utc).isoformat().encode(),
+                b"device_name": b"Unknown Device",
+                b"device_type": b"Desktop",
+                b"os": b"Windows",
+                b"browser": b"Chrome",
+                b"user_agent": b"Unknown",
+                b"location": b"Unknown",
+                b"status": b"active",
+                b"jti": session_id.encode()
+            })
+            await repo.expire(session_key, settings.SESSION_EXPIRY)
+
+            await repo.setex(
+                f"refresh_tokens:{vendor['_id']}:{refresh_jti}",
+                settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+                "active"
+            )
 
             payload.update({"access_token": access_token, "refresh_token": refresh_token})
 
@@ -167,7 +154,7 @@ async def approve_vendor_service(
             "ip": client_ip,
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
-        await log_audit(f"vendor_{action}", audit_data)
+        await auth_repo.log_audit(f"vendor_{action}", audit_data)
         log_info("Vendor approval action completed", extra=audit_data)
 
         return {
@@ -182,5 +169,5 @@ async def approve_vendor_service(
     except HTTPException:
         raise
     except Exception as e:
-        log_error("Unexpected error", extra={"error": str(e)}, exc_info=True)
+        log_error("Unexpected error in approve_vendor_service", extra={"error": str(e), "ip": client_ip}, exc_info=True)
         raise InternalServerErrorException(detail=get_message("server.error", language))

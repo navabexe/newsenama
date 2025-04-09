@@ -1,9 +1,9 @@
 # File: src/application/auth/otp/verify_otp.py
-
 from fastapi import APIRouter, Request, status, Depends, HTTPException
 from pydantic import Field
 from typing import Annotated
 from redis.asyncio import Redis
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from common.schemas.request_base import BaseRequestModel
 from common.schemas.standard_response import StandardResponse, Meta
@@ -11,9 +11,9 @@ from common.translations.messages import get_message
 from common.logging.logger import log_info, log_error
 from common.exceptions.base_exception import InternalServerErrorException
 from common.utils.ip_utils import extract_client_ip
-
-from infrastructure.database.redis.redis_client import get_redis_client
 from domain.auth.auth_services.otp_service.verify_otp_service import verify_otp_service
+from infrastructure.database.redis.redis_client import get_redis_client
+from infrastructure.database.mongodb.connection import get_mongo_db
 
 router = APIRouter()
 
@@ -29,6 +29,16 @@ class VerifyOTPModel(BaseRequestModel):
         "extra": "allow",
     }
 
+def log_endpoint_error(error: str | Exception, client_ip: str, data: VerifyOTPModel, endpoint: str = "/verify-otp"):
+    log_error(f"Handled error in {endpoint}", extra={
+        "error": str(error),
+        "ip": client_ip,
+        "endpoint": endpoint,
+        "request_id": data.request_id,
+        "client_version": data.client_version,
+        "device_fingerprint": data.device_fingerprint
+    })
+
 @router.post(
     "/verify-otp",
     status_code=status.HTTP_200_OK,
@@ -39,9 +49,10 @@ class VerifyOTPModel(BaseRequestModel):
 async def verify_otp_endpoint(
     data: VerifyOTPModel,
     request: Request,
-    redis: Annotated[Redis, Depends(get_redis_client)]
+    redis: Annotated[Redis, Depends(get_redis_client)],
+    db: Annotated[AsyncIOMotorDatabase, Depends(get_mongo_db)]
 ):
-    client_ip = request.headers.get("X-Forwarded-For", await extract_client_ip(request))  # await اضافه شده
+    client_ip = request.headers.get("X-Forwarded-For", await extract_client_ip(request))
     language = getattr(data, "response_language", "fa")
     user_agent = request.headers.get("User-Agent", "Unknown")
 
@@ -49,9 +60,10 @@ async def verify_otp_endpoint(
         result = await verify_otp_service(
             otp=data.otp,
             temporary_token=data.temporary_token,
-            client_ip=client_ip,  # حالا یه str هست
+            client_ip=client_ip,
             language=language,
             redis=redis,
+            db=db,
             request_id=data.request_id,
             client_version=data.client_version,
             device_fingerprint=data.device_fingerprint,
@@ -78,23 +90,9 @@ async def verify_otp_endpoint(
         )
 
     except HTTPException as http_exc:
-        log_error("Handled error in /verify-otp", extra={
-            "error": str(http_exc.detail),
-            "ip": client_ip,
-            "endpoint": "/verify-otp",
-            "request_id": data.request_id,
-            "client_version": data.client_version,
-            "device_fingerprint": data.device_fingerprint
-        })
+        log_endpoint_error(http_exc.detail, client_ip, data)
         raise http_exc
 
     except Exception as e:
-        log_error("Internal server error in /verify-otp", extra={
-            "error": str(e),
-            "ip": client_ip,
-            "endpoint": "/verify-otp",
-            "request_id": data.request_id,
-            "client_version": data.client_version,
-            "device_fingerprint": data.device_fingerprint
-        }, exc_info=True)
+        log_endpoint_error(e, client_ip, data, exc_info=True)
         raise InternalServerErrorException(detail=get_message("server.error", language))

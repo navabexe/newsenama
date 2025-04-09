@@ -1,7 +1,7 @@
 # File: src/application/auth/admin/approve_vendor.py
-
 from fastapi import APIRouter, Request, Depends, HTTPException, status
 from redis.asyncio import Redis
+from motor.motor_asyncio import AsyncIOMotorDatabase
 from typing import Annotated
 from pydantic import Field, field_validator, ConfigDict
 
@@ -11,6 +11,7 @@ from common.security.jwt_handler import get_current_user
 from common.translations.messages import get_message
 from domain.auth.auth_services.admin.approve_vendor_service import approve_vendor_service
 from infrastructure.database.redis.redis_client import get_redis_client
+from infrastructure.database.mongodb.connection import get_mongo_db
 from common.logging.logger import log_info, log_error
 from common.exceptions.base_exception import ForbiddenException, BadRequestException, InternalServerErrorException
 from common.utils.ip_utils import extract_client_ip
@@ -35,8 +36,21 @@ class ApproveVendorRequest(BaseRequestModel):
             raise ValueError("Action must be either 'approve' or 'reject'")
         return v
 
+def log_endpoint_error(error: str | Exception, client_ip: str, data: ApproveVendorRequest, user_id: str, endpoint: str = "/approve-vendor"):
+    log_error(f"Handled error in {endpoint}", extra={
+        "error": str(error),
+        "ip": client_ip,
+        "endpoint": endpoint,
+        "user_id": user_id,
+        "vendor_id": data.vendor_id,
+        "action": data.action,
+        "request_id": data.request_id,
+        "client_version": data.client_version,
+        "device_fingerprint": data.device_fingerprint
+    })
+
 @router.post(
-    "/approve-vendor",
+    "/approve-vendor",  # می‌تونی به settings ببری مثل REQUEST_OTP_PATH
     status_code=status.HTTP_200_OK,
     response_model=StandardResponse,
     summary="Approve or reject a vendor profile",
@@ -54,16 +68,15 @@ async def approve_vendor(
     request: Request,
     data: ApproveVendorRequest,
     current_user: Annotated[dict, Depends(get_current_user)],
-    redis: Annotated[Redis, Depends(get_redis_client)]
+    redis: Annotated[Redis, Depends(get_redis_client)],
+    db: Annotated[AsyncIOMotorDatabase, Depends(get_mongo_db)]  # اضافه شده
 ):
-    client_ip = await extract_client_ip(request)  # اضافه کردن await
+    client_ip = await extract_client_ip(request)
     language = data.response_language
 
     try:
-        # Check user role (redundant but kept for clarity)
         if current_user.get("role") != "admin":
-            log_error("Unauthorized access attempt",
-                      extra={"user_id": current_user.get("user_id"), "ip": client_ip})
+            log_error("Unauthorized access attempt", extra={"user_id": current_user.get("user_id"), "ip": client_ip})
             raise ForbiddenException(detail=get_message("auth.forbidden", language))
 
         result = await approve_vendor_service(
@@ -71,21 +84,21 @@ async def approve_vendor(
             vendor_id=data.vendor_id,
             action=data.action,
             client_ip=client_ip,
-            language=language,
-            redis=redis
+            redis=redis,
+            db=db,
+            language=language
         )
 
-        log_info("Vendor action successful",
-                 extra={
-                     "user_id": current_user.get("user_id"),
-                     "action": data.action,
-                     "vendor_id": data.vendor_id,
-                     "ip": client_ip,
-                     "endpoint": "/approve-vendor",
-                     "request_id": data.request_id,
-                     "client_version": data.client_version,
-                     "device_fingerprint": data.device_fingerprint
-                 })
+        log_info("Vendor action successful", extra={
+            "user_id": current_user.get("user_id"),
+            "action": data.action,
+            "vendor_id": data.vendor_id,
+            "ip": client_ip,
+            "endpoint": "/approve-vendor",
+            "request_id": data.request_id,
+            "client_version": data.client_version,
+            "device_fingerprint": data.device_fingerprint
+        })
 
         return StandardResponse(
             meta=result["meta"],
@@ -93,34 +106,13 @@ async def approve_vendor(
         )
 
     except HTTPException as e:
-        log_error("Vendor approval HTTPException", extra={
-            "detail": str(e.detail),
-            "ip": client_ip,
-            "endpoint": "/approve-vendor",
-            "request_id": data.request_id,
-            "client_version": data.client_version,
-            "device_fingerprint": data.device_fingerprint
-        }, exc_info=True)
+        log_endpoint_error(e.detail, client_ip, data, current_user.get("user_id"))
         raise
 
     except ValueError as e:
-        log_error("Vendor approval validation error", extra={
-            "error": str(e),
-            "ip": client_ip,
-            "endpoint": "/approve-vendor",
-            "request_id": data.request_id,
-            "client_version": data.client_version,
-            "device_fingerprint": data.device_fingerprint
-        }, exc_info=True)
+        log_endpoint_error(e, client_ip, data, current_user.get("user_id"))
         raise BadRequestException(detail=str(e))
 
     except Exception as e:
-        log_error("Unexpected error in vendor approval", extra={
-            "error": str(e),
-            "ip": client_ip,
-            "endpoint": "/approve-vendor",
-            "request_id": data.request_id,
-            "client_version": data.client_version,
-            "device_fingerprint": data.device_fingerprint
-        }, exc_info=True)
+        log_endpoint_error(e, client_ip, data, current_user.get("user_id"), exc_info=True)
         raise InternalServerErrorException(detail=get_message("server.error", language))
