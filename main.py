@@ -16,29 +16,6 @@ from infrastructure.setup.initial_setup import setup_admin_and_categories
 
 load_dotenv()
 
-# Log file path for debugging
-print("Running main.py from:", __file__)
-
-
-# Function to run Celery worker in a separate thread
-def run_celery_worker():
-    try:
-        log_info("Starting Celery worker")
-        process = subprocess.Popen(
-            ["celery", "-A", "celery_config.celery_app", "worker", "--loglevel=info"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        log_info("Celery worker started successfully", extra={"pid": process.pid})
-        for line in process.stdout:
-            log_info("Celery worker output", extra={"output": line.strip()})
-        for line in process.stderr:
-            log_error("Celery worker error", extra={"error": line.strip()})
-    except Exception as e:
-        log_error("Failed to start Celery worker", extra={"error": str(e)})
-
-
 # Lifespan handler for startup and shutdown
 @asynccontextmanager
 async def lifespan(app: FastAPI):
