@@ -2,7 +2,6 @@
 from fastapi import APIRouter
 
 from application.auth.auth import (
-    request_account_deletion,
     login,
     refresh_token,
     logout,
@@ -33,7 +32,6 @@ all_routers.include_router(complete_vendor_profile.router)
 all_routers.include_router(refresh_token.router)
 all_routers.include_router(logout.router)
 all_routers.include_router(force_logout.router)
-all_routers.include_router(request_account_deletion.router)
 all_routers.include_router(sessions.router)
 all_routers.include_router(approve_vendor.router)
 all_routers.include_router(login.router)
