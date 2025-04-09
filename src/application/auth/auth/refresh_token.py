@@ -12,6 +12,7 @@ from infrastructure.database.redis.redis_client import get_redis_client
 from infrastructure.database.mongodb.mongo_client import get_mongo_collection
 from infrastructure.database.mongodb.repository import MongoRepository
 from common.logging.logger import log_info, log_error
+from common.utils.ip_utils import extract_client_ip
 
 router = APIRouter()
 
@@ -23,7 +24,6 @@ class RefreshTokenRequest(BaseRequestModel):
         str_strip_whitespace=True,
         extra="forbid"
     )
-
 
 @router.post(
     "/refresh-token",
@@ -42,6 +42,7 @@ async def refresh_token(
     users_repo: Annotated[MongoRepository, Depends(get_mongo_collection("users"))],
     vendors_repo: Annotated[MongoRepository, Depends(get_mongo_collection("vendors"))]
 ):
+    client_ip = await extract_client_ip(request)
     try:
         result = await refresh_tokens(
             request=request,
@@ -51,15 +52,15 @@ async def refresh_token(
             vendors_repo=vendors_repo,
             language=body.response_language
         )
-        log_info("Refresh token successful", extra={"ip": request.client.host})
+        log_info("Refresh token successful", extra={"ip": client_ip})
         return result
 
     except HTTPException as e:
-        log_error("Refresh token HTTPException", extra={"detail": str(e.detail)})
-        raise
+        log_error("Refresh token HTTPException", extra={"detail": str(e.detail), "ip": client_ip})
+        raise  # خطای اصلی (مثل 401) را مستقیماً برگردانید
 
     except Exception as e:
-        log_error("Refresh token error", extra={"error": str(e)})
+        log_error("Refresh token error", extra={"error": str(e), "ip": client_ip})
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=get_message("server.error", body.response_language)

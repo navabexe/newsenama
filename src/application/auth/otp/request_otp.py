@@ -10,7 +10,7 @@ from domain.auth.auth_services.otp_service.request_otp_service import request_ot
 from common.schemas.standard_response import StandardResponse, Meta
 from common.translations.messages import get_message
 from common.logging.logger import log_info, log_error
-from common.exceptions.base_exception import BadRequestException, InternalServerErrorException
+from common.exceptions.base_exception import InternalServerErrorException
 from common.utils.ip_utils import extract_client_ip
 
 router = APIRouter()
@@ -28,7 +28,7 @@ async def request_otp_endpoint(
     redis: Annotated[Redis, Depends(get_redis_client)]
 ):
     try:
-        client_ip = await extract_client_ip(request)  # await اضافه شده
+        client_ip = await extract_client_ip(request)
         result = await request_otp_service(
             phone=data.phone,
             role=data.role,
@@ -45,7 +45,7 @@ async def request_otp_endpoint(
             "phone": data.phone,
             "role": data.role,
             "purpose": data.purpose,
-            "ip": client_ip,  # حالا یه str هست
+            "ip": client_ip,
             "endpoint": "/request-otp",
             "client_version": data.client_version,
             "device_fingerprint": data.device_fingerprint,
@@ -66,7 +66,7 @@ async def request_otp_endpoint(
         )
 
     except HTTPException as http_exc:
-        client_ip = await extract_client_ip(request)  # await اضافه شده
+        client_ip = await extract_client_ip(request)
         log_error("Handled HTTPException in /request-otp", extra={
             "error": str(http_exc.detail),
             "phone": data.phone,
@@ -80,7 +80,7 @@ async def request_otp_endpoint(
         raise http_exc
 
     except Exception as e:
-        client_ip = await extract_client_ip(request)  # await اضافه شده
+        client_ip = await extract_client_ip(request) 
         log_error("Internal server error in /request-otp", extra={
             "error": str(e),
             "phone": data.phone,

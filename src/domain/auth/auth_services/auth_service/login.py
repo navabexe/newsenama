@@ -18,11 +18,11 @@ from common.exceptions.base_exception import (
     InternalServerErrorException,
     TooManyRequestsException
 )
+from common.config.settings import settings
 
 from infrastructure.database.mongodb.mongo_client import find_one
 from infrastructure.database.redis.operations.redis_operations import hset, expire
 from infrastructure.database.redis.redis_client import get_redis_client
-
 
 MAX_ATTEMPTS = 5
 LOCKOUT_SECONDS = 600  # 10 minutes
@@ -53,7 +53,6 @@ async def login_service(
         attempts = int(await redis.get(login_key) or 0)
 
         if attempts >= MAX_ATTEMPTS:
-            # auth.login.too_many_attempts
             raise TooManyRequestsException(detail=get_message("auth.login.too_many_attempts", language))
 
         phone = phone.strip() if phone else None
@@ -70,25 +69,21 @@ async def login_service(
             collection = "admins"
 
         if not user:
-            # auth.login.invalid
             await redis.incr(login_key)
             await redis.expire(login_key, LOCKOUT_SECONDS)
             raise UnauthorizedException(detail=get_message("auth.login.invalid", language))
 
         if not user.get("password"):
-            # auth.login.no_password
             await redis.incr(login_key)
             await redis.expire(login_key, LOCKOUT_SECONDS)
             raise UnauthorizedException(detail=get_message("auth.login.no_password", language))
 
         if not verify_password(password, user["password"]):
-            # auth.login.invalid
             await redis.incr(login_key)
             await redis.expire(login_key, LOCKOUT_SECONDS)
             raise UnauthorizedException(detail=get_message("auth.login.invalid", language))
 
         if user.get("status") != "active":
-            # auth.login.not_active
             raise ForbiddenException(detail=get_message("auth.login.not_active", language))
 
         await redis.delete(login_key)
@@ -120,10 +115,11 @@ async def login_service(
             user_profile=user_profile,
             language=language
         )
-        refresh_token = await generate_refresh_token(
+        refresh_token, refresh_jti = await generate_refresh_token(
             user_id=user_id,
             role=role,
             session_id=session_id,
+            return_jti=True  # برای دریافت JTI
         )
 
         session_key = f"sessions:{user_id}:{session_id}"
@@ -142,9 +138,12 @@ async def login_service(
             },
             redis=redis
         )
+        await expire(session_key, 86400, redis=redis)
 
-        if role == "admin":
-            await expire(session_key, 86400, redis=redis)
+        # ذخیره رفرش توکن در Redis برای همه نقش‌ها
+        refresh_key = f"refresh_tokens:{user_id}:{refresh_jti}"
+        await redis.setex(refresh_key, settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60, "active")  # اصلاح شده
+        log_info("Stored new refresh token in Redis", extra={"key": refresh_key, "role": role})
 
         log_info("Login successful", extra={
             "user_id": user_id,

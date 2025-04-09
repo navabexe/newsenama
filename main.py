@@ -2,7 +2,7 @@
 from contextlib import asynccontextmanager
 import subprocess
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, PlainTextResponse
 
@@ -15,6 +15,10 @@ from infrastructure.database.redis.redis_client import init_redis_pool, close_re
 from infrastructure.setup.initial_setup import setup_admin_and_categories
 
 load_dotenv()
+
+# Log file path for debugging
+print("Running main.py from:", __file__)
+
 
 # Function to run Celery worker in a separate thread
 def run_celery_worker():
@@ -34,6 +38,7 @@ def run_celery_worker():
     except Exception as e:
         log_error("Failed to start Celery worker", extra={"error": str(e)})
 
+
 # Lifespan handler for startup and shutdown
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -48,9 +53,8 @@ async def lifespan(app: FastAPI):
         # Initialize Redis
         await init_redis_pool()
 
-        # # Start Celery worker in a separate thread
-        # celery_thread = Thread(target=run_celery_worker, daemon=True)
-        # celery_thread.start()
+        # Log all registered routes after setup
+        log_info("Registered routes", extra={"routes": [route.path for route in app.routes]})
 
         log_info("Senama API started", extra={"version": "1.0.0"})
     except Exception as e:
@@ -64,6 +68,7 @@ async def lifespan(app: FastAPI):
     await close_redis_pool()
     log_info("Senama API stopped")
 
+
 app = FastAPI(
     title="Senama Marketplace API",
     version="1.0.0",
@@ -72,6 +77,15 @@ app = FastAPI(
     redoc_url="/redoc",
     lifespan=lifespan
 )
+
+
+# Middleware to log incoming requests
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    log_info("Incoming request", extra={"method": request.method, "url": str(request.url)})
+    response = await call_next(request)
+    return response
+
 
 # CORS middleware (restrict origins in production)
 app.add_middleware(
@@ -84,18 +98,26 @@ app.add_middleware(
 
 register_exception_handlers(app)
 
-# Include API routers
-app.include_router(all_routers)
+# Include API routers with logging
+try:
+    log_info("Attempting to include all_routers", extra={"router": str(all_routers)})
+    app.include_router(all_routers)
+    log_info("Successfully included all_routers")
+except Exception as e:
+    log_error("Failed to include all_routers", extra={"error": str(e)})
+
 
 # Root endpoint redirecting to docs
 @app.get("/", response_class=RedirectResponse)
 async def root():
     return RedirectResponse(url="/docs")
 
+
 # Favicon endpoint (empty response)
 @app.get("/favicon.ico", response_class=PlainTextResponse)
 async def favicon():
     return ""
+
 
 # Health check endpoint
 @app.get("/health", status_code=200)

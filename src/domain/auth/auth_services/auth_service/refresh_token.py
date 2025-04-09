@@ -7,7 +7,7 @@ from common.logging.logger import log_info, log_error
 from infrastructure.database.mongodb.repository import MongoRepository
 from common.config.settings import settings
 from infrastructure.database.redis.operations.redis_operations import get, delete, hset, expire
-
+from common.utils.ip_utils import extract_client_ip
 
 async def refresh_tokens(
     request: Request,
@@ -17,7 +17,7 @@ async def refresh_tokens(
     vendors_repo: MongoRepository,
     language: str = "fa"
 ):
-    client_ip = request.client.host
+    client_ip = await extract_client_ip(request)
 
     payload = await decode_token(token=refresh_token, token_type="refresh", redis=redis)
 
@@ -86,7 +86,7 @@ async def refresh_tokens(
     # Save new refresh token in Redis
     refresh_key = f"refresh_tokens:{user_id}:{new_jti}"
     await redis.setex(refresh_key, settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60, "active")
-    log_info("Stored new refresh token in Redis", extra={"key": refresh_key})
+    log_info("Stored new refresh token in Redis", extra={"key": refresh_key, "ip": client_ip})
 
     # Update session info
     session_key = f"sessions:{user_id}:{session_id}"

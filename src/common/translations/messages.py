@@ -233,10 +233,20 @@ MESSAGES = {
                "body": "فعالیت مشکوک برای کاربر {user_id} از IP {ip} با {count} جلسه و {ip_count} آدرس IP"},
         "en": {"title": "Security Alert",
                "body": "Suspicious activity for user {user_id} from IP {ip} with {count} sessions and {ip_count} IPs"}
+    },
+    "auth.logout.session_not_found": {
+        "fa": "جلسه مورد نظر یافت نشد.",
+        "en": "The requested session was not found."
+    },
+    "auth.force_logout.no_sessions_found": {
+        "fa": "کاربری با این شناسه یافت نشد یا هیچ جلسه فعالی ندارد.",
+        "en": "User not found or no active sessions exist."
     }
 }
 
-def get_message(key: str, lang: Literal["fa", "en"] = "fa", variables: Optional[Dict[str, int | str]] = None) -> str | None:
+
+def get_message(key: str, lang: Literal["fa", "en"] = "fa",
+                variables: Optional[Dict[str, int | str]] = None) -> str | None:
     """
     Retrieve a localized message based on key and language, with optional variable substitution.
 

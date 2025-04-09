@@ -89,7 +89,7 @@ async def login(
     Unified login endpoint for users, vendors, and admins.
     Accepts either `username` or `phone` with `password` and returns access/refresh tokens.
     """
-    client_ip = extract_client_ip(request)
+    client_ip = await extract_client_ip(request)  # اضافه کردن await برای دریافت مقدار واقعی IP
     try:
         result = await login_service(
             phone=data.phone,

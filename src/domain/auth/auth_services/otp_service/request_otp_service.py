@@ -15,9 +15,9 @@ from common.config.settings import settings
 from common.utils.ip_utils import extract_client_ip
 from common.utils.string_utils import generate_otp_code
 from common.exceptions.base_exception import TooManyRequestsException, InternalServerErrorException
+
 from infrastructure.database.mongodb.mongo_client import insert_one
 from infrastructure.database.redis.operations.redis_operations import get, setex, incr, expire
-
 from infrastructure.database.redis.redis_client import get_redis_client
 
 from domain.notification.notification_services.builder import build_notification_content

@@ -116,7 +116,7 @@ async def complete_profile_service(
     redis: Redis = None
 ) -> dict:
     redis = redis or await get_redis_client()
-    client_ip = extract_client_ip(request)
+    client_ip = await extract_client_ip(request)  # اضافه کردن await
 
     # Rate limiting
     rate_limit_key = f"profile_complete_limit:{temporary_token}"
@@ -236,7 +236,7 @@ async def complete_profile_service(
             "user_id": user_id,
             "role": role,
             "status": updated_user["status"],
-            "ip": client_ip,
+            "ip": client_ip,  # حالا یک string است
             "session_id": session_id,
             "device": device,
             "request_id": getattr(request, "request_id", None) if request else None,

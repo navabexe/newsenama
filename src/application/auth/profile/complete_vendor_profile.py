@@ -31,7 +31,7 @@ async def complete_vendor_profile(
     request: Request,
     redis: Annotated[Redis, Depends(get_redis_client)]
 ):
-    client_ip = extract_client_ip(request)
+    client_ip = await extract_client_ip(request)  # اضافه کردن await
     language = data.response_language
 
     try:

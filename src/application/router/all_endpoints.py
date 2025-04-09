@@ -37,3 +37,8 @@ all_routers.include_router(request_account_deletion.router)
 all_routers.include_router(sessions.router)
 all_routers.include_router(approve_vendor.router)
 all_routers.include_router(login.router)
+
+
+from application.auth.otp import request_otp
+print("Imported request_otp:", request_otp.router)
+all_routers.include_router(request_otp.router)

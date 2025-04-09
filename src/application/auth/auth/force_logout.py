@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, ConfigDict
 
 from common.security.jwt_handler import get_current_user
 from common.translations.messages import get_message
-from domain.auth.auth_services.auth_service.force_logout import force_logout_service
+from domain.auth.auth_services.auth_service.force_logout_service import force_logout_service
 from infrastructure.database.redis.redis_client import get_redis_client
 from common.logging.logger import log_info, log_error
 
@@ -22,7 +22,6 @@ class ForceLogoutRequest(BaseModel):
         extra="forbid"
     )
 
-
 @router.post(
     "/force-logout",
     status_code=status.HTTP_200_OK,
@@ -31,6 +30,7 @@ class ForceLogoutRequest(BaseModel):
         400: {"description": "Invalid request."},
         401: {"description": "Unauthorized."},
         403: {"description": "Forbidden. Admins only."},
+        404: {"description": "User not found or no active sessions."},
         500: {"description": "Internal server error."}
     }
 )
