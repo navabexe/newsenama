@@ -10,9 +10,10 @@ from common.config.settings import settings
 from common.logging.logger import log_error, log_info
 from common.security.jwt_handler import decode_token, generate_access_token, generate_temp_token, generate_refresh_token
 from common.translations.messages import get_message
-from common.exceptions.base_exception import InternalServerErrorException, BadRequestException, TooManyRequestsException
+from common.exceptions.base_exception import InternalServerErrorException, BadRequestException, TooManyRequestsException, DatabaseConnectionException
 from common.utils.date_utils import utc_now
 from common.utils.ip_utils import get_location_from_ip
+from common.utils.log_utils import create_log_data  # استفاده از log_utils
 from domain.auth.entities.token_entity import VendorJWTProfile
 from domain.auth.services.session_service import get_session_service
 from domain.notification.notification_services.notification_service import notification_service
@@ -98,6 +99,15 @@ async def verify_otp_service(
                 await repo.delete(redis_key)
                 await repo.delete(temp_key)
                 await repo.setex(block_key, settings.BLOCK_DURATION_OTP, "1")
+                await notification_service.send(
+                    receiver_id="admin",
+                    receiver_type="admin",
+                    template_key="notification_failed",
+                    variables={"receiver_id": phone, "error": "Too many OTP attempts", "type": "security"},
+                    reference_type="otp",
+                    reference_id=phone,
+                    language=language
+                )
                 raise TooManyRequestsException(detail=get_message("otp.too_many.attempts", language))
 
             raise BadRequestException(detail=get_message(
@@ -117,6 +127,8 @@ async def verify_otp_service(
         if not user:
             user_data = create_user_data(phone, role, language, now)
             user_id = await auth_repo.insert_user(collection, user_data)
+            if not user_id:
+                raise DatabaseConnectionException(db_type="MongoDB", detail="Failed to insert user")
             user = {"_id": user_id, **user_data}
         else:
             user_id = str(user["_id"])
@@ -126,11 +138,26 @@ async def verify_otp_service(
             if not user.get("preferred_languages"):
                 update_fields["preferred_languages"] = [language]
             if update_fields:
-                await auth_repo.update_user(collection, user_id, update_fields)
+                if not await auth_repo.update_user(collection, user_id, update_fields):
+                    raise DatabaseConnectionException(db_type="MongoDB", detail="Failed to update user")
 
         status = user.get("status")
         preferred_language = (user.get("preferred_languages") or [language])[0]
-        notification_sent = await notification_service.send_otp_verified(phone, role, preferred_language)
+        notification_sent = await notification_service.send_otp_verified(phone, role,
+                                                                         preferred_language)
+
+        log_data = create_log_data(
+            entity_type="otp",
+            entity_id=phone,
+            action="verified",
+            ip=client_ip,
+            request_id=request_id,
+            client_version=client_version,
+            device_fingerprint=device_fingerprint,
+            extra_data={"role": role, "status": status, "user_id": user_id}
+        )
+        await auth_repo.log_audit("otp_verified", log_data)
+        log_info("OTP verified", extra=log_data)
 
         if status in ["incomplete", "pending"]:
             new_jti = str(uuid4())
@@ -143,16 +170,6 @@ async def verify_otp_service(
                 language=preferred_language
             )
             await repo.setex(f"temp_token:{new_jti}", settings.TEMP_TOKEN_EXPIRY, phone)
-
-            await auth_repo.log_audit("otp_verified_incomplete", {
-                "user_id": user_id,
-                "phone": phone,
-                "role": role,
-                "ip": client_ip,
-                "request_id": request_id,
-                "client_version": client_version,
-                "device_fingerprint": device_fingerprint
-            })
 
             return {
                 "status": status,
@@ -170,14 +187,13 @@ async def verify_otp_service(
             session_id = str(uuid4())
             updated_user = await auth_repo.find_user(collection, phone)
             if updated_user is None:
-                log_error("User not found after OTP verification", extra={"phone": phone, "user_id": user_id})
-                raise InternalServerErrorException(detail=get_message("server.error", language))
+                raise DatabaseConnectionException(db_type="MongoDB", detail="User not found after update")
             profile_data = VendorJWTProfile(**updated_user).model_dump() if role == "vendor" else None
 
             location = await get_location_from_ip(client_ip)
             if location == "Unknown":
                 log_info("Location fetch failed, using default", extra={"ip": client_ip})
-            session_data = {  # تبدیل به bytes
+            session_data = {
                 b"ip": client_ip.encode(),
                 b"created_at": now.isoformat().encode(),
                 b"last_seen_at": now.isoformat().encode(),
@@ -219,18 +235,6 @@ async def verify_otp_service(
                 "active"
             )
 
-            await auth_repo.log_audit("otp_verified_active", {
-                "user_id": user_id,
-                "phone": phone,
-                "role": role,
-                "session_id": session_id,
-                "ip": client_ip,
-                "request_id": request_id,
-                "client_version": client_version,
-                "device_fingerprint": device_fingerprint,
-                "location": location
-            })
-
             return {
                 "access_token": access_token,
                 "refresh_token": refresh_token,
@@ -242,13 +246,42 @@ async def verify_otp_service(
 
         raise InternalServerErrorException(detail=get_message("server.error", language))
 
-    except HTTPException:
+    except TooManyRequestsException:
+        raise
+    except BadRequestException:
+        raise
+    except DatabaseConnectionException as db_exc:
+        log_error("Database error in OTP verification", extra={
+            "error": str(db_exc),
+            "phone": phone,
+            "ip": client_ip,
+            "endpoint": settings.VERIFY_OTP_PATH
+        }, exc_info=True)
+        await notification_service.send(
+            receiver_id="admin",
+            receiver_type="admin",
+            template_key="notification_failed",
+            variables={"receiver_id": phone, "error": str(db_exc), "type": "database"},
+            reference_type="otp",
+            reference_id=phone,
+            language=language
+        )
         raise
     except Exception as e:
         log_error("OTP verification failed", extra={
             "error": str(e),
+            "phone": phone,
             "ip": client_ip,
             "endpoint": settings.VERIFY_OTP_PATH,
             "request_id": request_id
         }, exc_info=True)
+        await notification_service.send(
+            receiver_id="admin",
+            receiver_type="admin",
+            template_key="notification_failed",
+            variables={"receiver_id": phone, "error": str(e), "type": "general"},
+            reference_type="otp",
+            reference_id=phone,
+            language=language
+        )
         raise InternalServerErrorException(detail=get_message("server.error", language))

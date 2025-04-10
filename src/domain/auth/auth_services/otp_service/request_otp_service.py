@@ -12,7 +12,8 @@ from common.security.jwt_handler import generate_temp_token
 from common.config.settings import settings
 from common.utils.ip_utils import extract_client_ip
 from common.utils.string_utils import generate_otp_code
-from common.exceptions.base_exception import TooManyRequestsException, InternalServerErrorException
+from common.exceptions.base_exception import TooManyRequestsException, InternalServerErrorException, DatabaseConnectionException
+from common.utils.log_utils import create_log_data
 from infrastructure.database.redis.repositories.otp_repository import OTPRepository
 from infrastructure.database.mongodb.repositories.auth_repository import AuthRepository
 from domain.auth.services.rate_limiter import check_rate_limits, store_rate_limit_keys
@@ -22,23 +23,6 @@ from infrastructure.database.mongodb.connection import get_mongo_db
 def hash_otp(otp: str) -> str:
     salted = f"{settings.OTP_SALT}:{otp}"
     return hashlib.sha256(salted.encode()).hexdigest()
-
-def create_log_data(phone: str, role: str, purpose: str, jti: str, client_ip: str, request_id: str, client_version: str, device_fingerprint: str, otp: str = None) -> dict:
-    log_data = {
-        "phone": phone,
-        "role": role,
-        "purpose": purpose,
-        "jti": jti,
-        "ip": client_ip,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "endpoint": settings.REQUEST_OTP_PATH,
-        "request_id": request_id,
-        "client_version": client_version,
-        "device_fingerprint": device_fingerprint
-    }
-    if settings.ENVIRONMENT == "development" and otp:  # استفاده مستقیم از settings
-        log_data["otp"] = otp
-    return log_data
 
 async def request_otp_service(
     phone: str,
@@ -61,6 +45,7 @@ async def request_otp_service(
         client_ip = await extract_client_ip(request)
         redis_key = f"otp:{role}:{phone}"
         block_key = f"otp-blocked:{role}:{phone}"
+        temp_token_key = f"temp_token_used:{phone}"
 
         if await repo.get(block_key):
             raise TooManyRequestsException(detail=get_message("otp.too_many.blocked", lang=language))
@@ -82,9 +67,19 @@ async def request_otp_service(
 
         await repo.setex(redis_key, settings.OTP_EXPIRY, otp_hash)
         await repo.setex(f"temp_token:{jti}", settings.OTP_EXPIRY, phone)
+        await repo.setex(temp_token_key, settings.OTP_EXPIRY, "generated")
         await store_rate_limit_keys(phone, role, repo)
 
-        log_data = create_log_data(phone, role, purpose, jti, client_ip, request_id, client_version, device_fingerprint, otp_code)
+        log_data = create_log_data(
+            entity_type="otp",
+            entity_id=phone,
+            action="requested",
+            ip=client_ip,
+            request_id=request_id,
+            client_version=client_version,
+            device_fingerprint=device_fingerprint,
+            extra_data={"role": role, "purpose": purpose, "jti": jti, "otp": otp_code if settings.ENVIRONMENT == "development" else None}
+        )
         await auth_repo.log_audit("otp_requested", log_data)
         log_info("OTP requested", extra=log_data)
 
@@ -96,7 +91,8 @@ async def request_otp_service(
             reference_type="otp",
             reference_id=phone,
             language=language,
-            return_bool=True
+            return_bool=True,
+            additional_receivers=[{"id": "admin", "type": "admin"}]  # اطلاع به ادمین
         )
 
         return {
@@ -108,15 +104,42 @@ async def request_otp_service(
 
     except TooManyRequestsException:
         raise
+    except DatabaseConnectionException as db_exc:
+        log_error("Database error in OTP request", extra={
+            "error": str(db_exc),
+            "phone": phone,
+            "role": role,
+            "ip": client_ip,
+            "endpoint": settings.REQUEST_OTP_PATH
+        }, exc_info=True)
+        await notification_service.send(
+            receiver_id="admin",
+            receiver_type="admin",
+            template_key="notification_failed",
+            variables={"receiver_id": phone, "error": str(db_exc), "type": "database"},
+            reference_type="otp",
+            reference_id=phone,
+            language=language
+        )
+        raise
     except Exception as e:
         log_error("OTP request failed", extra={
             "error": str(e),
             "phone": phone,
             "role": role,
-            "ip": await extract_client_ip(request),
+            "ip": client_ip,
             "endpoint": settings.REQUEST_OTP_PATH,
             "request_id": request_id,
             "client_version": client_version,
             "device_fingerprint": device_fingerprint
         }, exc_info=True)
+        await notification_service.send(
+            receiver_id="admin",
+            receiver_type="admin",
+            template_key="notification_failed",
+            variables={"receiver_id": phone, "error": str(e), "type": "general"},
+            reference_type="otp",
+            reference_id=phone,
+            language=language
+        )
         raise InternalServerErrorException(detail=get_message("server.error", lang=language))

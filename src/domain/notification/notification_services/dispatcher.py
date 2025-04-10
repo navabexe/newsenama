@@ -1,7 +1,10 @@
+# File: domain/notification/notification_services/dispatch_notification.py
 from datetime import datetime, UTC
 from domain.notification.entities.notification_entity import Notification, NotificationChannel
 from infrastructure.database.mongodb.mongo_client import insert_one
 from common.logging.logger import log_info, log_error
+from common.exceptions.base_exception import DatabaseConnectionException
+from domain.notification.notification_services.notification_service import notification_service
 
 async def dispatch_notification(
     receiver_id: str,
@@ -31,9 +34,11 @@ async def dispatch_notification(
         )
 
         notification_id = await insert_one("notifications", notification.model_dump(exclude_none=True))
+        if not notification_id:
+            raise DatabaseConnectionException(db_type="MongoDB", detail="Failed to insert notification")
         notification.id = str(notification_id)
 
-        await insert_one("audit_logs", {
+        audit_id = await insert_one("audit_logs", {
             "action": "notification_sent",
             "timestamp": datetime.now(UTC).isoformat(),
             "details": {
@@ -44,6 +49,8 @@ async def dispatch_notification(
                 "channel": channel.value
             }
         })
+        if not audit_id:
+            raise DatabaseConnectionException(db_type="MongoDB", detail="Failed to insert audit log")
 
         log_info("Notification dispatched", extra={
             "notification_id": notification_id,
@@ -55,9 +62,32 @@ async def dispatch_notification(
         })
         return notification_id
 
+    except DatabaseConnectionException as db_exc:
+        log_error("Database error in dispatch", extra={
+            "receiver_id": receiver_id,
+            "error": str(db_exc)
+        }, exc_info=True)
+        await notification_service.send(
+            receiver_id="admin",
+            receiver_type="admin",
+            template_key="notification_failed",
+            variables={"receiver_id": receiver_id, "error": str(db_exc), "type": "database"},
+            reference_type="system",
+            reference_id=receiver_id
+        )
+        raise
+
     except Exception as e:
         log_error("Failed to dispatch notification", extra={
             "receiver_id": receiver_id,
             "error": str(e)
         }, exc_info=True)
+        await notification_service.send(
+            receiver_id="admin",
+            receiver_type="admin",
+            template_key="notification_failed",
+            variables={"receiver_id": receiver_id, "error": str(e), "type": "general"},
+            reference_type="system",
+            reference_id=receiver_id
+        )
         raise Exception(f"Failed to dispatch notification: {str(e)}")

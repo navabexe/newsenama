@@ -11,27 +11,27 @@ from infrastructure.database.mongodb.connection import get_mongo_db
 from common.schemas.standard_response import StandardResponse, Meta
 from common.translations.messages import get_message
 from common.logging.logger import log_info, log_error
-from common.exceptions.base_exception import InternalServerErrorException
-from common.utils.ip_utils import extract_client_ip
+from common.exceptions.base_exception import InternalServerErrorException, DatabaseConnectionException
+from common.dependencies.ip_dep import get_client_ip
 from common.config.settings import settings
 
 router = APIRouter()
 
 @router.post(
-    settings.REQUEST_OTP_PATH,  # استفاده از settings
+    settings.REQUEST_OTP_PATH,
     status_code=status.HTTP_200_OK,
     response_model=StandardResponse,
     summary="Request OTP for login/signup",
-    tags=[settings.AUTH_TAG]  # استفاده از settings
+    tags=[settings.AUTH_TAG]
 )
 async def request_otp_endpoint(
     data: RequestOTPInput,
     request: Request,
     redis: Annotated[Redis, Depends(get_redis_client)],
-    db: Annotated[AsyncIOMotorDatabase, Depends(get_mongo_db)]
+    db: Annotated[AsyncIOMotorDatabase, Depends(get_mongo_db)],
+    client_ip: Annotated[str, Depends(get_client_ip)]
 ):
     try:
-        client_ip = await extract_client_ip(request)
         result = await request_otp_service(
             phone=data.phone,
             role=data.role,
@@ -69,8 +69,19 @@ async def request_otp_endpoint(
             }
         )
 
+    except DatabaseConnectionException as db_exc:
+        log_error("Database error in request-otp", extra={
+            "error": str(db_exc),
+            "phone": data.phone,
+            "role": data.role,
+            "ip": client_ip,
+            "endpoint": settings.REQUEST_OTP_PATH,
+            "client_version": data.client_version,
+            "device_fingerprint": data.device_fingerprint,
+            "request_id": data.request_id
+        }, exc_info=True)
+        raise
     except HTTPException as http_exc:
-        client_ip = await extract_client_ip(request)
         log_error("Handled HTTPException in request-otp", extra={
             "error": str(http_exc.detail),
             "phone": data.phone,
@@ -84,7 +95,6 @@ async def request_otp_endpoint(
         raise http_exc
 
     except Exception as e:
-        client_ip = await extract_client_ip(request)
         log_error("Internal server error in request-otp", extra={
             "error": str(e),
             "phone": data.phone,

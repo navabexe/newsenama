@@ -35,4 +35,8 @@ class ServiceUnavailableException(HTTPException):
     def __init__(self, detail: str = "Service temporarily unavailable. Please try again later."):
         super().__init__(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
 
+class DatabaseConnectionException(HTTPException):
+    def __init__(self, db_type: str, detail: str = "Database connection failed. Please try again later."):
+        super().__init__(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"{db_type}: {detail}")
+
 
