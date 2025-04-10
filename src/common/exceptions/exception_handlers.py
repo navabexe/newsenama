@@ -4,6 +4,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from common.logging.logger import log_error
+from common.exceptions.base_exception import ForbiddenException  # ✅ اضافه شده
 
 def register_exception_handlers(app: FastAPI):
     """
@@ -19,25 +20,16 @@ def register_exception_handlers(app: FastAPI):
         errors = exc.errors()  # list of dicts with details about each error
         details = []
         for err in errors:
-            # example err:
-            # {
-            #   "loc": ("body", "phone"),
-            #   "msg": "field required",
-            #   "type": "value_error.missing",
-            # }
             loc = err.get("loc", [])
             msg = err.get("msg", "Invalid input.")
             if len(loc) > 1:
-                # typically loc = ["body", "field_name"]
                 field_name = loc[1]
                 details.append(f"{field_name}: {msg}")
             else:
                 details.append(msg)
 
-        # join all messages into a single string
         error_message = "; ".join(details) if details else "Invalid input."
 
-        # log the first or combined error
         log_error("Validation error", extra={
             "path": request.url.path,
             "method": request.method,
@@ -64,6 +56,22 @@ def register_exception_handlers(app: FastAPI):
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": str(exc.detail)},
+        )
+
+    @app.exception_handler(ForbiddenException)
+    async def forbidden_exception_handler(request: Request, exc: ForbiddenException):
+        """
+        Handles custom ForbiddenException (e.g., CSRF errors).
+        Returns a 403 response with the exception's detail.
+        """
+        log_error("Handled ForbiddenException", extra={
+            "path": request.url.path,
+            "method": request.method,
+            "error": str(exc)
+        })
+        return JSONResponse(
+            status_code=403,
+            content={"detail": str(exc)}
         )
 
     @app.exception_handler(Exception)

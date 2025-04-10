@@ -43,6 +43,12 @@ def generate_otp_code(length: int = 6) -> str:
     """
     return ''.join(secrets.choice("0123456789") for _ in range(length))
 
+def generate_random_string(length: int = 32) -> str:
+    """
+    Generates a random alphanumeric string of given length using secrets.
+    """
+    return secrets.token_urlsafe(length)[:length]
+
 def decode_value(value):
     """
     Decode bytes to str if necessary, otherwise return as-is.

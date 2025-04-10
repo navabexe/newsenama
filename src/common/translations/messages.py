@@ -258,6 +258,14 @@ MESSAGES = {
         "fa": "پروفایل فروشنده شما با شماره {phone} اکنون فعال است. خوش آمدید!",
         "en": "Your vendor profile with phone {phone} is now active. Welcome!"
     },
+    "csrf.missing": {
+        "fa": "توکن CSRF ارسال نشده است.",
+        "en": "CSRF token is missing."
+    },
+    "csrf.invalid": {
+        "fa": "توکن CSRF معتبر نیست یا منقضی شده است.",
+        "en": "CSRF token is invalid or expired."
+    }
 
 }
 

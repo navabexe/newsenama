@@ -14,6 +14,7 @@ class StandardResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     detail: str = Field(..., examples=["Invalid credentials."])
+    message: Optional[str] = None
     error_code: Optional[str] = Field(None, examples=["AUTH_001"])
     status: Literal["error"] = "error"
 
