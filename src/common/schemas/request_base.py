@@ -5,25 +5,28 @@ from typing import Optional, Literal
 
 
 class BaseRequestModel(BaseModel):
-    """Base request model with common fields for all API requests."""
+    """
+    Base model for all API request bodies.
+    Includes shared metadata like language and tracking fields.
+    """
 
     response_language: Literal["fa", "en"] = Field(
         default="fa",
-        description="Language code for API response messages (e.g., 'fa' for Persian, 'en' for English')"
+        description="Language for response messages (e.g., 'fa' for Farsi, 'en' for English)"
     )
 
     request_id: Optional[str] = Field(
         default=None,
-        description="Optional unique ID for tracing the request across services"
+        description="Optional request ID for traceability and debugging"
     )
 
     client_version: Optional[str] = Field(
         default=None,
-        description="Client version (e.g., 'v1.2.3')"
+        description="Optional client version string (e.g., 'v1.2.3')"
     )
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="forbid",  # Reject extra fields
         str_strip_whitespace=True,
-        validate_by_name=True,
+        validate_assignment=True
     )

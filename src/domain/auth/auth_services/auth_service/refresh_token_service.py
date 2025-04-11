@@ -91,7 +91,6 @@ async def refresh_tokens(
     await redis.setex(refresh_key, settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60, "active")
     log_info("Stored new refresh token in Redis", extra={"key": refresh_key, "ip": client_ip})
 
-    # استخراج و ذخیره اطلاعات کامل سشن
     now = datetime.now(timezone.utc)
     session_key = f"sessions:{user_id}:{session_id}"
     existing_session = await redis.hgetall(session_key)

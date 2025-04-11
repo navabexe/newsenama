@@ -192,23 +192,29 @@ class NotificationService:
         )
 
     async def send_session_notification(
-        self,
-        user_id: str,
-        role: str,
-        client_ip: str,
-        sessions: list,
-        language: str,
-        is_admin_action: bool = False
+            self,
+            user_id: str,
+            role: str,
+            client_ip: str,
+            sessions: list,
+            language: str,
+            is_admin_action: bool = False
     ) -> bool:
         try:
             session_count = len(sessions)
+            latest_session = None
+            time = datetime.now(timezone.utc).isoformat()
+            device = "unknown"
+
             if sessions:
-                latest_session = max(sessions, key=lambda s: s.get("last_seen_at", s["created_at"]))
-                time = latest_session.get("last_seen_at", latest_session["created_at"])
+                # پاکسازی None برای مقایسه
+                for s in sessions:
+                    if not s.get("last_seen_at"):
+                        s["last_seen_at"] = s.get("created_at", time)
+
+                latest_session = max(sessions, key=lambda s: s.get("last_seen_at"))
+                time = latest_session.get("last_seen_at", latest_session.get("created_at", time))
                 device = latest_session.get("device_name", "unknown")
-            else:
-                time = datetime.now(timezone.utc).isoformat()
-                device = "unknown"
 
             user_content = await build_notification_content(
                 template_key="sessions.checked",
@@ -220,6 +226,7 @@ class NotificationService:
                     "device": device
                 }
             )
+
             await self._dispatch_notification(
                 receiver_id=user_id,
                 receiver_type=role,
@@ -230,7 +237,7 @@ class NotificationService:
                 reference_id=user_id
             )
 
-            ip_count = len(set(s["ip_address"] for s in sessions)) if sessions else 0
+            ip_count = len(set(s.get("ip") or s.get("ip_address") for s in sessions if "ip" in s or "ip_address" in s))
             if session_count > 5 or ip_count > 3:
                 admin_content = await build_notification_content(
                     template_key="sessions.danger",
@@ -242,6 +249,7 @@ class NotificationService:
                         "ip_count": ip_count
                     }
                 )
+
                 await self._dispatch_notification(
                     receiver_id="admin",
                     receiver_type="admin",
@@ -251,23 +259,8 @@ class NotificationService:
                     reference_type="session",
                     reference_id=user_id
                 )
-            return True
 
-        except DatabaseConnectionException as db_exc:
-            log_error("Database error in session notification", extra={
-                "user_id": user_id,
-                "ip": client_ip,
-                "error": str(db_exc)
-            })
-            await self.send(
-                receiver_id="admin",
-                receiver_type="admin",
-                template_key="notification_failed",
-                variables={"user_id": user_id, "error": str(db_exc), "type": "database"},
-                reference_type="session",
-                reference_id=user_id
-            )
-            return False
+            return True
 
         except Exception as e:
             log_error("Session notification failed", extra={
@@ -275,14 +268,21 @@ class NotificationService:
                 "ip": client_ip,
                 "error": str(e)
             })
+
             await self.send(
                 receiver_id="admin",
                 receiver_type="admin",
                 template_key="notification_failed",
-                variables={"user_id": user_id, "error": str(e), "type": "general"},
+                variables={
+                    "receiver_id": "admin",
+                    "user_id": user_id,
+                    "error": str(e),
+                    "type": "general"
+                },
                 reference_type="session",
                 reference_id=user_id
             )
             return False
+
 
 notification_service = NotificationService()

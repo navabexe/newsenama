@@ -56,3 +56,20 @@ def decode_value(value):
     if isinstance(value, bytes):
         return value.decode()
     return value  # Return str or None as-is
+
+import json
+from datetime import datetime
+from bson import ObjectId
+
+def safe_json_dumps(data):
+    """Safely convert any complex object to JSON string."""
+    def default_serializer(obj):
+        if isinstance(obj, ObjectId):
+            return str(obj)
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, set):
+            return list(obj)
+        return str(obj)
+
+    return json.dumps(data, default=default_serializer, ensure_ascii=False)

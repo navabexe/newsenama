@@ -2,9 +2,10 @@
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import Response, JSONResponse
 from fastapi.exceptions import HTTPException
 from common.logging.logger import log_error, log_info
+from common.schemas.standard_response import ErrorResponse
 import sentry_sdk
 
 
@@ -14,25 +15,26 @@ class ErrorLoggingMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         except HTTPException as http_exc:
-            log_error("Handled HTTP exception in endpoint", extra={
-                "path": request.url.path,
-                "method": request.method,
-                "error": str(http_exc.detail),
-                "status_code": http_exc.status_code,
-                "client_ip": request.client.host if request.client else "unknown",
-                "headers": dict(request.headers),
-            })
             raise http_exc
 
-        except Exception as e:
+        except Exception as exc:
             error_context = {
                 "path": request.url.path,
                 "method": request.method,
-                "error": str(e),
+                "error": str(exc),
                 "client_ip": request.client.host if request.client else "unknown",
                 "headers": dict(request.headers),
             }
-            log_error("Unhandled error in endpoint", extra=error_context, exc_info=True)
-            log_info("Sending error to Sentry", extra={"error": str(e), "path": request.url.path})
-            sentry_sdk.capture_exception(e)
-            raise
+
+            log_error("Unhandled error in middleware", extra=error_context, exc_info=True)
+            log_info("Sending to Sentry", extra={"error": str(exc), "path": request.url.path})
+            sentry_sdk.capture_exception(exc)
+
+            return JSONResponse(
+                status_code=500,
+                content=ErrorResponse(
+                    detail="Unexpected server error.",
+                    message="Something went wrong.",
+                    status="error"
+                ).model_dump()
+            )

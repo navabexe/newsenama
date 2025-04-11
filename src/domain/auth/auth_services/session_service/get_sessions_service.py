@@ -1,70 +1,50 @@
-# File: src/domain/auth/services/session_service/get_sessions_service.py
-from datetime import datetime, timezone
-from fastapi import HTTPException, status
-from redis.asyncio import Redis
-from motor.motor_asyncio import AsyncIOMotorDatabase
+# File: domain/auth/auth_services/session_service/get_sessions_service.py
 
-from common.logging.logger import log_error, log_info
-from common.translations.messages import get_message
-from common.config.settings import settings
-from infrastructure.database.mongodb.repositories.auth_repository import AuthRepository
-from domain.auth.services.session_service import get_session_service
-from domain.notification.notification_services.notification_service import notification_service
-from infrastructure.database.redis.redis_client import get_redis_client
-from infrastructure.database.mongodb.connection import get_mongo_db
+from redis.asyncio import Redis
+from typing import Literal
+
+from domain.auth.auth_services.session_service.session_utils import fetch_sessions_from_redis
+from domain.notification.notification_services.notification_service import NotificationService
+from common.logging.logger import log_info, log_error
+
 
 async def get_sessions_service(
     user_id: str,
-    client_ip: str,
-    status_filter: str = "active",
+    redis: Redis,
+    status_filter: Literal["active", "all"] = "active",
     language: str = "fa",
-    requester_role: str = "user",
-    redis: Redis = None,
-    db: AsyncIOMotorDatabase = None
+    requester_role: str = "vendor",
+    client_ip: str = "unknown",
 ) -> dict:
-    session_service = get_session_service(redis)
-    if db is None:
-        db = await get_mongo_db()
-    auth_repo = AuthRepository(db)
+    """
+    Retrieve user sessions from Redis with optional status filtering.
+    Also sends a notification to admin if sessions were accessed.
+    """
+    sessions = await fetch_sessions_from_redis(redis=redis, user_id=user_id, status_filter=status_filter)
 
-    try:
-        sessions = await session_service.get_sessions(user_id, client_ip, status_filter)
+    notification_sent = False
+    if requester_role == "admin":
+        try:
+            notification_sent = await NotificationService().send_session_notification(
+                user_id=user_id,
+                sessions=sessions,
+                ip=client_ip,
+                language=language
+            )
+        except Exception as e:
+            log_error("Session notification failed", extra={
+                "user_id": user_id,
+                "ip": client_ip,
+                "error": str(e)
+            })
 
-        await auth_repo.log_audit("sessions_retrieved", {
-            "user_id": user_id,
-            "session_count": len(sessions),
-            "status_filter": status_filter,
-            "ip": client_ip,
-            "requester_role": requester_role,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        })
+    log_info("Sessions retrieved successfully", extra={
+        "user_id": user_id,
+        "session_count": len(sessions),
+        "status_filter": status_filter
+    })
 
-        notification_sent = await notification_service.send_session_notification(
-            user_id=user_id,
-            role=requester_role if requester_role == "admin" else "vendor",
-            client_ip=client_ip,
-            sessions=sessions,
-            language=language,
-            is_admin_action=(requester_role == "admin")
-        )
-
-        message_key = "sessions.active_retrieved" if status_filter == "active" else "sessions.all_retrieved"
-        log_info("Sessions retrieved and processed successfully", extra={
-            "user_id": user_id,
-            "session_count": len(sessions),
-            "ip": client_ip
-        })
-        return {
-            "sessions": sessions,
-            "notification_sent": notification_sent,
-            "message": get_message(message_key, language)
-        }
-
-    except Exception as e:
-        log_error("Session retrieval failed", extra={
-            "user_id": user_id,
-            "error": str(e),
-            "ip": client_ip,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }, exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=get_message("server.error", language))
+    return {
+        "sessions": sessions,
+        "notification_sent": notification_sent
+    }

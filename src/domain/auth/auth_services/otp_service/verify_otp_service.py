@@ -1,4 +1,5 @@
 # File: src/domain/auth/services/otp/verify_otp_service.py
+
 import hashlib
 from datetime import datetime
 from uuid import uuid4
@@ -7,18 +8,17 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from common.base_service.base_service import BaseService
 from common.config.settings import settings
-from common.security.jwt_handler import decode_token, generate_access_token, generate_temp_token, generate_refresh_token
+from common.security.jwt_handler import decode_token, generate_temp_token
 from common.translations.messages import get_message
 from common.exceptions.base_exception import BadRequestException, TooManyRequestsException
 from common.utils.date_utils import utc_now
-from common.utils.ip_utils import get_location_from_ip
 from common.utils.log_utils import create_log_data
-from domain.auth.entities.token_entity import VendorJWTProfile
 from domain.auth.services.session_service import get_session_service
 from domain.notification.notification_services.notification_service import notification_service
 from infrastructure.database.redis.repositories.otp_repository import OTPRepository
 from infrastructure.database.mongodb.repositories.auth_repository import AuthRepository
 from infrastructure.database.mongodb.connection import get_mongo_db
+from domain.auth.services.session_helpers.session_creator import create_user_session
 
 def hash_otp(otp: str) -> str:
     salted = f"{settings.OTP_SALT}:{otp}"
@@ -54,6 +54,7 @@ class OTPVerifyService(BaseService):
             db = await get_mongo_db()
         auth_repo = AuthRepository(db)
         session_service = get_session_service(redis)
+
         context = {
             "entity_type": "otp",
             "entity_id": "unknown",
@@ -150,41 +151,26 @@ class OTPVerifyService(BaseService):
                     "phone": phone,
                     "notification_sent": notification_sent
                 }
+
             elif status == "active":
                 await session_service.delete_incomplete_sessions(user_id)
-                session_id = str(uuid4())
                 updated_user = await auth_repo.find_user(collection, phone)
-                profile_data = VendorJWTProfile(**updated_user).model_dump() if role == "vendor" else None
-                location = await get_location_from_ip(client_ip) if client_ip else "Unknown"
-                session_data = {
-                    b"ip": client_ip.encode(),
-                    b"created_at": now.isoformat().encode(),
-                    b"last_seen_at": now.isoformat().encode(),
-                    b"device_name": b"Unknown Device",
-                    b"device_type": b"Desktop",
-                    b"os": b"Windows",
-                    b"browser": b"Chrome",
-                    b"user_agent": user_agent.encode(),
-                    b"location": location.encode(),
-                    b"status": b"active",
-                    b"jti": session_id.encode()
-                }
-                session_key = f"sessions:{user_id}:{session_id}"
-                await repo.hset(session_key, session_data)
-                await repo.expire(session_key, settings.SESSION_EXPIRY)
 
-                access_token = await generate_access_token(user_id=user_id, role=role, session_id=session_id, vendor_profile=profile_data, language=preferred_language, status="active", phone_verified=True)
-                refresh_token, refresh_jti = await generate_refresh_token(user_id=user_id, role=role, session_id=session_id, status="active", language=preferred_language, return_jti=True)
-                await repo.setex(f"refresh_tokens:{user_id}:{refresh_jti}", settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400, "active")
+                session_result = await create_user_session(
+                    user_id=user_id,
+                    phone=phone,
+                    role=role,
+                    user=updated_user,
+                    redis=repo.redis,
+                    client_ip=client_ip,
+                    user_agent=user_agent,
+                    language=preferred_language,
+                    now=now
+                )
+                session_result["notification_sent"] = notification_sent
+                session_result["message"] = get_message("otp.valid", preferred_language)
+                return session_result
 
-                return {
-                    "access_token": access_token,
-                    "refresh_token": refresh_token,
-                    "status": "active",
-                    "message": get_message("otp.valid", preferred_language),
-                    "phone": phone,
-                    "notification_sent": notification_sent
-                }
             raise BadRequestException(detail=get_message("server.error", language))
 
         return await self.execute(operation, context, language)

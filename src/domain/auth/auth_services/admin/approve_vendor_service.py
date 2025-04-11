@@ -124,9 +124,11 @@ async def approve_vendor_service(
             )
 
             session_key = f"sessions:{vendor['_id']}:{session_id}"
+            now = datetime.now(timezone.utc).isoformat()
             await repo.hset(session_key, mapping={
                 b"ip": client_ip.encode(),
-                b"created_at": datetime.now(timezone.utc).isoformat().encode(),
+                b"created_at": now.encode(),
+                b"last_seen_at": now.encode(),
                 b"device_name": b"Unknown Device",
                 b"device_type": b"Desktop",
                 b"os": b"Windows",

@@ -4,7 +4,7 @@ from typing import Dict, Any
 from fastapi import HTTPException
 from common.logging.logger import log_info, log_error
 from common.exceptions.base_exception import DatabaseConnectionException, InternalServerErrorException
-from common.error_handlers import handle_db_error, handle_general_error
+from common.exceptions.error_handlers import handle_db_error, handle_general_error
 import sentry_sdk
 
 class BaseService(ABC):

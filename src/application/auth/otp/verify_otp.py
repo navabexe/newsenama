@@ -1,4 +1,5 @@
 # File: src/application/auth/otp/verify_otp.py
+
 from fastapi import APIRouter, Request, Depends
 from pydantic import Field
 from typing import Annotated
@@ -7,7 +8,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from starlette import status
 
 from common.schemas.request_base import BaseRequestModel
-from common.schemas.standard_response import StandardResponse, Meta
+from common.schemas.standard_response import StandardResponse
 from common.logging.logger import log_info
 from common.dependencies.ip_dep import get_client_ip
 from domain.auth.auth_services.otp_service.verify_otp_service import otp_verify_service
@@ -69,11 +70,7 @@ async def verify_otp_endpoint(
         "user_agent": user_agent
     })
 
-    return StandardResponse(
-        meta=Meta(
-            message=result["message"],
-            status="success",
-            code=200
-        ),
-        data={key: val for key, val in result.items() if key != "message"}
+    return StandardResponse.success(
+        data={key: val for key, val in result.items() if key != "message"},
+        message=result["message"]
     )
