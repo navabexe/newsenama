@@ -1,11 +1,12 @@
 # File: src/domain/auth/services/session_service.py
-from redis.asyncio import Redis
 from typing import List, Dict
+
+from redis.asyncio import Redis
 
 from common.logging.logger import log_info
 from common.utils.string_utils import decode_value
-from common.config.settings import settings
 from infrastructure.database.redis.repositories.otp_repository import OTPRepository
+
 
 class SessionService:
     def __init__(self, repo: OTPRepository):

@@ -1,7 +1,10 @@
 # src/infrastructure/database/redis/repositories/otp_repository.py
 from typing import Optional, Dict, List
+
 from redis.asyncio import Redis
+
 from infrastructure.database.redis.redis_client import get_redis_client
+
 
 class OTPRepository:
     def __init__(self, redis: Redis = None):

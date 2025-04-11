@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
-from uuid import uuid4
 from typing import Optional, List
+from uuid import uuid4
 
 from common.config.settings import settings
 from common.logging.logger import log_info, log_error

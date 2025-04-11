@@ -7,8 +7,8 @@ from redis.asyncio import Redis, ConnectionPool
 from redis.exceptions import RedisError
 
 from common.config.settings import settings
-from common.logging.logger import log_info, log_error
 from common.exceptions.base_exception import ServiceUnavailableException
+from common.logging.logger import log_info, log_error
 
 # Redis connection pool (global, but managed)
 redis_pool: Optional[ConnectionPool] = None

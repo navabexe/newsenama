@@ -1,7 +1,7 @@
 # File: common/utils/pagination.py
 
-from typing import Any, List, Dict
 from math import ceil
+from typing import Any, List, Dict
 
 
 def paginate_response(

@@ -3,9 +3,10 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.status import HTTP_400_BAD_REQUEST, HTTP_500_INTERNAL_SERVER_ERROR
+
 from common.logging.logger import log_error
 from common.schemas.standard_response import ErrorResponse
-from starlette.status import HTTP_400_BAD_REQUEST, HTTP_500_INTERNAL_SERVER_ERROR
 
 
 def register_exception_handlers(app: FastAPI):

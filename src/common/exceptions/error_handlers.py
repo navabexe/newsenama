@@ -1,11 +1,12 @@
 # File: src/common/error_handlers.py
 
 from typing import Dict, Any, Literal
-from common.logging.logger import log_error
-from common.exceptions.base_exception import DatabaseConnectionException
-from domain.notification.notification_services.notification_service import notification_service
+
 import sentry_sdk
 
+from common.exceptions.base_exception import DatabaseConnectionException
+from common.logging.logger import log_error
+from domain.notification.services.notification_service import notification_service
 
 ErrorType = Literal["general", "database", "service", "authentication"]
 

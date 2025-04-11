@@ -1,13 +1,14 @@
 # File: common/security/access_guard.py
 
 from typing import List
+
 from fastapi import Depends, HTTPException, Request
 from redis.asyncio import Redis
 
 from common.logging.logger import log_error, log_info
 from common.security.jwt_handler import get_token_from_header, decode_token, JWTError
-from domain.auth.entities.token_entity import TokenPayload
 from domain.access_control.entities.access_control_module import AccessControlService, AccessDeniedError
+from domain.auth.entities.token_entity import TokenPayload
 from infrastructure.database.redis.redis_client import get_redis_client
 
 

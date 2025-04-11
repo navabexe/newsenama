@@ -1,9 +1,11 @@
 # File: common/utils/ip_utils.py
 
-from fastapi import Request
 import aiohttp
+from fastapi import Request
+
 from common.config.settings import settings
 from common.logging.logger import log_error
+
 
 async def extract_client_ip(request: Request) -> str:
     """Extract the client's IP address from the request headers or client host."""

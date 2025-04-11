@@ -1,9 +1,10 @@
 # domain/vendors/entities/vendor_model.py
 
-from pydantic import BaseModel, Field, field_validator
-from typing import List, Optional
 from datetime import datetime, UTC
 from enum import Enum
+from typing import List, Optional
+
+from pydantic import BaseModel, Field
 
 
 class VendorVisibility(str, Enum):

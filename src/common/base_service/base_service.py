@@ -1,11 +1,14 @@
 # File: src/domain/common/base_service.py
 from abc import ABC
 from typing import Dict, Any
+
+import sentry_sdk
 from fastapi import HTTPException
-from common.logging.logger import log_info, log_error
+
 from common.exceptions.base_exception import DatabaseConnectionException, InternalServerErrorException
 from common.exceptions.error_handlers import handle_db_error, handle_general_error
-import sentry_sdk
+from common.logging.logger import log_info, log_error
+
 
 class BaseService(ABC):
     def __init__(self):

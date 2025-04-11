@@ -1,8 +1,10 @@
 # redis_operations.py
 from typing import Optional, Dict, List
+
 from fastapi import Depends
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
+
 from common.logging.logger import log_info, log_error
 from infrastructure.database.redis.redis_client import get_redis_client
 

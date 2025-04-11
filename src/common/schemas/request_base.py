@@ -1,7 +1,8 @@
 # File: common/schemas/request_base.py
 
-from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, Literal
+
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class BaseRequestModel(BaseModel):

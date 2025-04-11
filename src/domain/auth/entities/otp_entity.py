@@ -1,9 +1,10 @@
 # File: domain/auth/entities/otp_entity.py
 
+import re
 from datetime import datetime, timezone
 from typing import Optional, Literal
+
 from pydantic import BaseModel, Field, ConfigDict, field_validator
-import re
 
 from common.validators.validators import validate_and_format_phone
 

@@ -5,24 +5,24 @@ This file merges all JWT-related logic: generation, decoding, revocation, authen
 Useful for centralized import and easier maintenance.
 """
 
+import asyncio
 # ========== Imports ==========
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
 from typing import Optional, List, Union, Tuple
-from jose import jwt, ExpiredSignatureError, JWTError as JoseJWTError
-from fastapi import Request, HTTPException, Depends
-from redis.asyncio import Redis, ConnectionError
-from pydantic import ValidationError
+from uuid import uuid4
+
 from bson import ObjectId
-import asyncio
+from fastapi import Request, HTTPException, Depends
+from jose import jwt, ExpiredSignatureError, JWTError as JoseJWTError
+from pydantic import ValidationError
+from redis.asyncio import Redis, ConnectionError
 
 from common.config.settings import settings
 from common.logging.logger import log_info, log_error, log_warning
-from infrastructure.database.mongodb.mongo_client import find_one
-from infrastructure.database.redis.redis_client import get_redis_client
-from infrastructure.database.redis.operations.redis_operations import delete, keys, setex, get
-
 from domain.auth.entities.token_entity import TokenPayload
+from infrastructure.database.mongodb.mongo_client import find_one
+from infrastructure.database.redis.operations.redis_operations import delete, keys, setex, get
+from infrastructure.database.redis.redis_client import get_redis_client
 
 # ========== Constants ==========
 VALID_ROLES = {"user", "vendor", "admin"}

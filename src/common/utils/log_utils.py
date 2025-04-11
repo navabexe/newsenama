@@ -1,6 +1,8 @@
 # File: src/common/utils/log_utils.py
 from datetime import datetime, timezone
+
 from common.config.settings import settings
+
 
 def create_log_data(
     entity_type: str,

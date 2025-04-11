@@ -3,8 +3,8 @@
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 from common.config.settings import settings
-from common.logging.logger import log_info, log_error
 from common.exceptions.base_exception import ServiceUnavailableException
+from common.logging.logger import log_info, log_error
 
 
 class MongoDBConnection:

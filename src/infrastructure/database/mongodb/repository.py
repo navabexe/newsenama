@@ -1,11 +1,12 @@
 # File: infrastructure/database/mongodb/repository.py
 
 from typing import Any, Dict, List, Optional, Tuple
+
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from common.logging.logger import log_info, log_error
 from common.exceptions.base_exception import ServiceUnavailableException
+from common.logging.logger import log_info, log_error
 
 
 class MongoRepository:

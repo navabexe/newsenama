@@ -1,9 +1,8 @@
 # File: src/domain/auth/services/rate_limiter.py
-from redis.asyncio import Redis
-from common.translations.messages import get_message
-from common.exceptions.base_exception import TooManyRequestsException
-from infrastructure.database.redis.repositories.otp_repository import OTPRepository
 from common.config.settings import settings
+from common.exceptions.base_exception import TooManyRequestsException
+from common.translations.messages import get_message
+from infrastructure.database.redis.repositories.otp_repository import OTPRepository
 
 BLOCK_DURATION = settings.BLOCK_DURATION
 

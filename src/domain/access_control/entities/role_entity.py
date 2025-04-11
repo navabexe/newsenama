@@ -1,8 +1,10 @@
 # File: domain/access_control/entities/role_entity.py
 
 from typing import List, Optional
-from pydantic import BaseModel, Field
+
 from bson import ObjectId
+from pydantic import BaseModel, Field
+
 
 class Role(BaseModel):
     id: str = Field(default_factory=lambda: str(ObjectId()), alias="_id")

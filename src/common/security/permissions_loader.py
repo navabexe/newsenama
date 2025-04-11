@@ -1,11 +1,11 @@
 # File: src/common/security/permissions_loader.py
 from functools import lru_cache
 from typing import Optional, List, Dict
-import yaml
-from pathlib import Path
 
-from common.logging.logger import log_error, log_info
+import yaml
+
 from common.config.settings import settings
+from common.logging.logger import log_error, log_info
 
 PERMISSIONS_PATH = settings.BASE_DIR / "src" / "common" / "security" / "permissions_map.yaml"
 

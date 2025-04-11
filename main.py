@@ -1,17 +1,18 @@
 # File: main.py
 
 from contextlib import asynccontextmanager
+
+import sentry_sdk
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-import sentry_sdk
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 
-from application.router.all_endpoints import all_routers
+from api.routers.all_endpoints import all_routers
 from common.config.settings import settings
 from common.exceptions.exception_handlers import register_exception_handlers
-from common.middleware.error_middleware import ErrorLoggingMiddleware
 from common.logging.logger import log_info, log_error
+from api.middleware.error_middleware import ErrorLoggingMiddleware
 from infrastructure.database.mongodb.connection import MongoDBConnection
 from infrastructure.database.mongodb.repository import MongoRepository
 from infrastructure.database.redis.redis_client import init_redis_pool, close_redis_pool
@@ -85,7 +86,7 @@ app.add_middleware(
 # Register exception handlers
 register_exception_handlers(app)
 
-# Register application routers
+# Register routers
 try:
     log_info("Attempting to include all_routers", extra={"router": str(all_routers)})
     app.include_router(all_routers)

@@ -1,7 +1,8 @@
 # File: domain/access_control/entities/user_role_entity.py
 
-from pydantic import BaseModel, Field
 from bson import ObjectId
+from pydantic import BaseModel, Field
+
 
 class UserRole(BaseModel):
     id: str = Field(default_factory=lambda: str(ObjectId()), alias="_id")

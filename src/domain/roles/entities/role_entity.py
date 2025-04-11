@@ -1,6 +1,8 @@
-from pydantic.v1 import BaseModel, Field
-from typing import List, Optional
 from datetime import datetime, UTC
+from typing import List, Optional
+
+from pydantic.v1 import BaseModel, Field
+
 
 class Permission(BaseModel):
     id: Optional[str] = None

@@ -1,4 +1,5 @@
 from passlib.context import CryptContext
+
 from common.logging.logger import log_error
 
 # Initialize password hashing context

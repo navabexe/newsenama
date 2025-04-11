@@ -1,10 +1,12 @@
 # File: src/common/utils/string_utils.py
-import re
-import unicodedata
-import uuid
 import hashlib
+import re
 import secrets
-from datetime import datetime, UTC
+import uuid
+from datetime import UTC
+
+import unicodedata
+
 
 def slugify(text: str) -> str:
     """

@@ -1,8 +1,11 @@
-from fastapi import Depends
 from typing import Callable
+
+from fastapi import Depends
 from motor.motor_asyncio import AsyncIOMotorDatabase
+
 from .connection import get_mongo_db
 from .repository import MongoRepository
+
 
 def get_mongo_collection(collection_name: str) -> Callable[[], MongoRepository]:
     def _get_repo(db: AsyncIOMotorDatabase = Depends(get_mongo_db)) -> MongoRepository:

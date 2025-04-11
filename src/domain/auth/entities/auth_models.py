@@ -1,10 +1,12 @@
 # File: domain/auth/entities/auth_models.py
 
-from typing import Optional, List
-from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
 import re
+from typing import Optional, List
+
+from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
 
 from common.schemas.request_base import BaseRequestModel
+
 
 class Location(BaseModel):
     """Geographical location coordinates."""

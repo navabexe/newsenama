@@ -1,7 +1,9 @@
-from pydantic.v1 import BaseModel, Field
-from typing import Optional
 from datetime import datetime, UTC
 from enum import Enum
+from typing import Optional
+
+from pydantic.v1 import BaseModel, Field
+
 
 class AdminRole(str, Enum):
     ADMIN = "admin"

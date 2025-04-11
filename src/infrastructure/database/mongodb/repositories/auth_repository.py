@@ -1,7 +1,10 @@
 # File: src/infrastructure/database/mongodb/repositories/auth_repository.py
 from typing import Optional, Dict, Any, List
+
 from motor.motor_asyncio import AsyncIOMotorDatabase
+
 from infrastructure.database.mongodb.repository import MongoRepository
+
 
 class AuthRepository:
     def __init__(self, db: AsyncIOMotorDatabase):
